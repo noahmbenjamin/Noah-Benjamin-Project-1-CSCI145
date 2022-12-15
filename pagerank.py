@@ -9,8 +9,11 @@ import math
 import torch
 import gzip
 import csv
-
 import logging
+import gensim.downloader
+from gensim.models.word2vec import Word2Vec
+import requests
+from bs4 import BeautifulSoup
 
 
 class WebGraph():
@@ -156,25 +159,25 @@ class WebGraph():
 
                 xt = xprev.t().squeeze()
 
-                #print('P=', self.P)
-                #print('a=', a)
+                # print('P=', self.P)
+                # print('a=', a)
 
-                alphasum = (alpha*xt@a + (1 - alpha))*v.t()
-                #x = torch.sparse.addmm(alphasum, xt, self.P, alpha=alpha)
-                #x = torch.sparse.addmm(alphasum, self.P.t(), xprev, alpha=alpha)
-                #print('p shape=', self.P.shape)
-                #print('xprev shape=', xprev.shape)
-                #print('xprev=', xprev)
-                #print('xt shape=', xt.shape)
-                #print('xt=', xt)
-                #print('v.t() =', v.t())
-                #print('alphasum=', alphasum)
+                alphasum = (alpha * xt @ a + (1 - alpha)) * v.t()
+                # x = torch.sparse.addmm(alphasum, xt, self.P, alpha=alpha)
+                # x = torch.sparse.addmm(alphasum, self.P.t(), xprev, alpha=alpha)
+                # print('p shape=', self.P.shape)
+                # print('xprev shape=', xprev.shape)
+                # print('xprev=', xprev)
+                # print('xt shape=', xt.shape)
+                # print('xt=', xt)
+                # print('v.t() =', v.t())
+                # print('alphasum=', alphasum)
 
                 term2 = torch.sparse.mm(self.P.t(), xprev).t()
-                #print('term2=', term2)
-                x = alpha*term2 + alphasum
+                # print('term2=', term2)
+                x = alpha * term2 + alphasum
                 x = x.t()
-                #print('x=', x)
+                # print('x=', x)
                 residual = torch.norm(x - xprev)
                 logging.debug(f'i={i} residual={residual}')
 
@@ -185,6 +188,16 @@ class WebGraph():
             # x = x0.squeeze()
             return x.squeeze()
 
+    def word_occurs(self, data) -> int:
+        # url-parsing is above my level. I used:
+        # https://stackoverflow.com/questions/70569546/count-the-frequency-of-a-specific-word-on-a-specific-url-python
+        # for the majority of this code
+        for item in data:
+            r = requests.get(item['url'], allow_redirects=False)
+            soup = BeautifulSoup(r.content.lower(), 'lxml')
+            count = soup.body.get_text(strip=True).lower().count(item['word'].lower())
+            return count
+
     def search(self, pi, query='', max_results=10):
         '''
         Logs all urls that match the query.
@@ -193,16 +206,44 @@ class WebGraph():
         n = self.P.shape[0]
         vals, indices = torch.topk(pi, n)
 
+        model_twitter_25 = gensim.downloader.load("glove-twitter-25")
+        terms = query.split()
+        sim_tuple = model_twitter_25.most_similar(positive=terms, topn=5)
+        # most similar words in outputted tuple format
+        similar = [item[0] for item in sim_tuple]
+        p = 30
+        # exponent for word score, values between 30-60 work best
+        final_matches = []
+        # top10 pagerank matches that will be sorted by their relevance using the query score
+
         matches = 0
         for i in range(n):
             if matches >= max_results:
                 break
             index = indices[i].item()
             url = self._index_to_url(index)
+
             pagerank = vals[i].item()
-            if url_satisfies_query(url, query):
+            if url_satisfies_query(url, similar):
                 logging.info(f'rank={matches} pagerank={pagerank:0.4e} url={url}')
+                final_matches.append(url)
                 matches += 1
+
+        final_scores = [[i, final_matches[i]] for i in range(len(final_matches))]
+        for i in range(len(final_matches)):
+            score = 0
+            # print(final_scores)
+            for word in sim_tuple:
+                # word[0] is the word, word[1] is the similarity score of the word. Format is output from most_similar()
+                count = self.word_occurs([{'word': word[0], 'url': 'https://' + final_matches[i]}])
+                # print(word, count)
+                score += count * word[1] ** p
+            final_scores[i][0] = score
+        final_scores.sort()
+        final_scores.reverse()
+        print(final_scores)
+
+
 
 
 def url_satisfies_query(url, query):
@@ -231,9 +272,9 @@ def url_satisfies_query(url, query):
     True
     '''
     satisfies = False
-    terms = query.split()
-
+    terms = query
     num_terms = 0
+
     for term in terms:
         if term[0] != '-':
             num_terms += 1
