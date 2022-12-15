@@ -11,7 +11,6 @@ import gzip
 import csv
 import logging
 import gensim.downloader
-from gensim.models.word2vec import Word2Vec
 import requests
 from bs4 import BeautifulSoup
 
