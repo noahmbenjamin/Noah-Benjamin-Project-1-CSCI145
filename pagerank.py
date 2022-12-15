@@ -206,9 +206,9 @@ class WebGraph():
         n = self.P.shape[0]
         vals, indices = torch.topk(pi, n)
 
-        model_twitter_25 = gensim.downloader.load("glove-twitter-25")
+        model_twitter_50 = gensim.downloader.load("glove-twitter-50")
         terms = query.split()
-        sim_tuple = model_twitter_25.most_similar(positive=terms, topn=5)
+        sim_tuple = model_twitter_50.most_similar(positive=terms, topn=5)
         # most similar words in outputted tuple format
         similar = [item[0] for item in sim_tuple]
         p = 30
