@@ -194,7 +194,10 @@ class WebGraph():
         for item in data:
             r = requests.get(item['url'], allow_redirects=False)
             soup = BeautifulSoup(r.content.lower(), 'lxml')
-            count = soup.body.get_text(strip=True).lower().count(item['word'].lower())
+            try:
+                count = soup.body.get_text(strip=True).lower().count(item['word'].lower())
+            except:
+                count = 0
             return count
 
     def search(self, pi, query='', max_results=10):
@@ -204,14 +207,24 @@ class WebGraph():
         '''
         n = self.P.shape[0]
         vals, indices = torch.topk(pi, n)
+        terms_init = query.split()
+        terms = [word for word in terms_init if '-' not in word]
+        terms_other = [word for word in terms_init if '-' in word]
 
-        model_twitter_50 = gensim.downloader.load("glove-twitter-50")
-        terms = query.split()
-        sim_tuple = model_twitter_50.most_similar(positive=terms, topn=5)
-        # most similar words in outputted tuple format
-        similar = [item[0] for item in sim_tuple]
-        p = 30
-        # exponent for word score, values between 30-60 work best
+        if terms:
+            model_twitter_50 = gensim.downloader.load("glove-twitter-50")
+            sim_tuple = model_twitter_50.most_similar(positive=terms, topn=5)
+            sim_tuple.insert(0, (query.lower(), 1))
+            # most similar words in outputted tuple format
+            similar = [item[0] for item in sim_tuple]
+            similar.insert(0, query)
+        else:
+            similar = []
+            sim_tuple = []
+
+        if terms_other:
+            for i in range(len(terms_other)):
+                similar.insert(i, terms_other[i])
         final_matches = []
         # top10 pagerank matches that will be sorted by their relevance using the query score
 
@@ -228,19 +241,25 @@ class WebGraph():
                 final_matches.append(url)
                 matches += 1
 
-        final_scores = [[i, final_matches[i]] for i in range(len(final_matches))]
-        for i in range(len(final_matches)):
-            score = 0
-            # print(final_scores)
-            for word in sim_tuple:
-                # word[0] is the word, word[1] is the similarity score of the word. Format is output from most_similar()
-                count = self.word_occurs([{'word': word[0], 'url': 'https://' + final_matches[i]}])
-                # print(word, count)
-                score += count * word[1] ** p
-            final_scores[i][0] = score
-        final_scores.sort()
-        final_scores.reverse()
-        print(final_scores)
+        if terms:
+            final_scores = [[i, final_matches[i]] for i in range(len(final_matches))]
+            p = 45
+            # exponent for word score, values between 30-60 work best. I chose 45 because I found values of p right
+            # in between 30 and 60 yielded the best results.
+            for i in range(len(final_matches)):
+                score = 0
+                # print(final_scores)
+                for word in sim_tuple:
+                    # word[0] is the word, word[1] is the similarity score of the word. Format is output from
+                    # most_similar()
+                    count = self.word_occurs([{'word': word[0], 'url': 'https://' + final_matches[i]}])
+                    # print(word, count)
+                    score += count * word[1] ** p
+                final_scores[i][0] = score
+            final_scores.sort()
+            final_scores.reverse()
+            final_list = [i[1] for i in final_scores]
+            print("\n\n\nFINAL OUTPUT HERE: \n", *final_list, sep='\n')
 
 
 
@@ -294,7 +313,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', required=True)
-    parser.add_argument('--personalization_vector_query')
+    parser.add_argument('--personalization_vector_query', default='')
     parser.add_argument('--search_query', default='')
     parser.add_argument('--filter_ratio', type=float, default=None)
     parser.add_argument('--alpha', type=float, default=0.85)

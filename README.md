@@ -1,2757 +1,2395 @@
 # Pagerank Project
 
-In this project, you will create a simple search engine for the website <https://www.lawfareblog.com>.
-This website provides legal analysis on US national security issues.
 
-**Due date:** Sunday, 18 September at midnight
-
-**Computation:**
-This project has low computational requirements.
-You are not required to complete it on the lambda server (although you are welcome to if you'd like).
-
-## Background
-
-**Data:**
-
-The `data` folder contains two files that store example "web graphs".
-The file `small.csv.gz` contains the example graph from the *Deeper Inside Pagerank* paper.
-This is a small graph, so we can manually inspect the contents of this file with the following command:
-```
-$ zcat data/small.csv.gz
-source,target
-1,2
-1,3
-3,1
-3,2
-3,5
-4,5
-4,6
-5,6
-5,4
-6,4
-```
-
-> **Recall:**
-> The `cat` terminal command outputs the contents of a file to stdout, and the `zcat` command first decompressed a gzipped file and then outputs the decompressed contents.
-
-As you can see, the graph is stored as a CSV file.
-The first line is a header,
-and each subsequent line stores a single edge in the graph.
-The first column contains the source node of the edge and the second column the target node.
-The file is assumed to be sorted alphabetically.
-
-The second data file `lawfareblog.csv.gz` contains the link structure for the lawfare blog.
-Let's take a look at the first 10 of these lines:
-```
-$ zcat data/lawfareblog.csv.gz | head
-source,target
-www.lawfareblog.com/,www.lawfareblog.com/topic/interrogation
-www.lawfareblog.com/,www.lawfareblog.com/upcoming-events
-www.lawfareblog.com/,www.lawfareblog.com/
-www.lawfareblog.com/,www.lawfareblog.com/our-comments-policy
-www.lawfareblog.com/,www.lawfareblog.com/litigation-documents-related-appointment-matthew-whitaker-acting-attorney-general
-www.lawfareblog.com/,www.lawfareblog.com/topic/lawfare-research-paper-series
-www.lawfareblog.com/,www.lawfareblog.com/topic/book-reviews
-www.lawfareblog.com/,www.lawfareblog.com/documents-related-mueller-investigation
-www.lawfareblog.com/,www.lawfareblog.com/topic/international-law-loac
-```
-You can see that in this file, the node names are URLs.
-Semantically, each line corresponds to an HTML `<a>` tag that is contained in the source webpage and links to the target webpage.
-
-We can use the following command to count the total number of links in the file:
-```
-$ zcat data/lawfareblog.csv.gz | wc -l
-1610789
-```
-Since every link corresponds to a non-zero entry in the `P` matrix,
-this is also the value of `nnz(P)`.
-(Technically, we should subtract 1 from this value since the `wc -l` command also counts the header line, not just the data lines.)
-
-To get the dimensions of `P`, we need to count the total number of nodes in the graph.
-The following command achieves this by: decompressing the file, extracting the first column, removing all duplicate lines, then counting the results.
-```
-$ zcat data/lawfareblog.csv.gz | cut -f1 -d, | uniq | wc -l
-25761
-```
-This matrix is large enough that computing matrix products for dense matrices takes several minutes on a single CPU.
-Fortunately, however, the matrix is very sparse.
-The following python code computes the fraction of entries in the matrix with non-zero values:
-```
->>> 1610788 / (25760**2)
-0.0024274297384360172
-```
-Thus, by using sparse matrix operations, we will be able to speed up the code significantly.
-
-**Code:**
-
-The `pagerank.py` file contains code for loading the graph CSV files and searching through their nodes for key phrases.
-For example, you can perform a search for all nodes (i.e. urls) that mention the string `corona` with the following command:
-```
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --search_query=corona
-```
-
-> **NOTE:**
-> It will take about 10 seconds to load and parse the data files.
-> All the other computation happens essentially instantly.
-
-Currently, the pagerank of the nodes is not currently being calculated correctly, and so the webpages are returned in an arbitrary order.
-Your task in this assignment will be to fix these calculations in order to have the most important results (i.e. highest pagerank results) returned first.
-
-## Task 1: the power method
-
-Implement the `WebGraph.power_method` function in `pagerank.py` for computing the pagerank vector by fixing the `FIXME` annotation.
-
-**Part 1:**
-
-To check that your implementation is working,
-you should run the program on the `data/small.csv.gz` graph.
-For my implementation, I get the following output.
-```
-$ python3 pagerank.py --data=data/small.csv.gz --verbose
-DEBUG:root:computing indices
-DEBUG:root:computing values
-DEBUG:root:i=0 residual=2.5629e-01
-DEBUG:root:i=1 residual=1.1841e-01
-DEBUG:root:i=2 residual=7.0701e-02
-DEBUG:root:i=3 residual=3.1815e-02
-DEBUG:root:i=4 residual=2.0497e-02
-DEBUG:root:i=5 residual=1.0108e-02
-DEBUG:root:i=6 residual=6.3716e-03
-DEBUG:root:i=7 residual=3.4228e-03
-DEBUG:root:i=8 residual=2.0879e-03
-DEBUG:root:i=9 residual=1.1750e-03
-DEBUG:root:i=10 residual=7.0131e-04
-DEBUG:root:i=11 residual=4.0321e-04
-DEBUG:root:i=12 residual=2.3800e-04
-DEBUG:root:i=13 residual=1.3812e-04
-DEBUG:root:i=14 residual=8.1083e-05
-DEBUG:root:i=15 residual=4.7251e-05
-DEBUG:root:i=16 residual=2.7704e-05
-DEBUG:root:i=17 residual=1.6164e-05
-DEBUG:root:i=18 residual=9.4778e-06
-DEBUG:root:i=19 residual=5.5066e-06
-DEBUG:root:i=20 residual=3.2042e-06
-DEBUG:root:i=21 residual=1.8612e-06
-DEBUG:root:i=22 residual=1.1283e-06
-DEBUG:root:i=23 residual=6.1907e-07
-INFO:root:rank=0 pagerank=6.6270e-01 url=4
-INFO:root:rank=1 pagerank=5.2179e-01 url=6
-INFO:root:rank=2 pagerank=4.1434e-01 url=5
-INFO:root:rank=3 pagerank=2.3175e-01 url=2
-INFO:root:rank=4 pagerank=1.8590e-01 url=3
-INFO:root:rank=5 pagerank=1.6917e-01 url=1
-```
-Yours likely won't be identical (due to weird floating point issues), but it should be similar.
-In particular, the ranking of the nodes/urls should be the same order.
-
-> **NOTE:**
-> The `--verbose` flag causes all of the lines beginning with `DEBUG` to be printed.
-> By default, only lines beginning with `INFO` are printed.
-
-**Part 2:**
-
-The `pagerank.py` file has an option `--search_query`, which takes a string as a parameter.
-If this argument is used, then the program returns all nodes that match the query string sorted according to their pagerank.
-Essentially, this gives us the most important pages related to our query.
-
-Again, you may not get the exact same results as me,
-but you should get similar results to the examples I've shown below.
-Verify that you do in fact get similar results.
-
-```
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --search_query='corona'
-INFO:root:rank=0 pagerank=1.0038e-03 url=www.lawfareblog.com/lawfare-podcast-united-nations-and-coronavirus-crisis
-INFO:root:rank=1 pagerank=8.9224e-04 url=www.lawfareblog.com/house-oversight-committee-holds-day-two-hearing-government-coronavirus-response
-INFO:root:rank=2 pagerank=7.0390e-04 url=www.lawfareblog.com/britains-coronavirus-response
-INFO:root:rank=3 pagerank=6.9153e-04 url=www.lawfareblog.com/prosecuting-purposeful-coronavirus-exposure-terrorism
-INFO:root:rank=4 pagerank=6.7041e-04 url=www.lawfareblog.com/israeli-emergency-regulations-location-tracking-coronavirus-carriers
-INFO:root:rank=5 pagerank=6.6256e-04 url=www.lawfareblog.com/why-congress-conducting-business-usual-face-coronavirus
-INFO:root:rank=6 pagerank=6.5046e-04 url=www.lawfareblog.com/congressional-homeland-security-committees-seek-ways-support-state-federal-responses-coronavirus
-INFO:root:rank=7 pagerank=6.3620e-04 url=www.lawfareblog.com/paper-hearing-experts-debate-digital-contact-tracing-and-coronavirus-privacy-concerns
-INFO:root:rank=8 pagerank=6.1248e-04 url=www.lawfareblog.com/house-subcommittee-voices-concerns-over-us-management-coronavirus
-INFO:root:rank=9 pagerank=6.0187e-04 url=www.lawfareblog.com/livestream-house-oversight-committee-holds-hearing-government-coronavirus-response
-
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --search_query='trump'
-INFO:root:rank=0 pagerank=5.7826e-03 url=www.lawfareblog.com/trump-asks-supreme-court-stay-congressional-subpeona-tax-returns
-INFO:root:rank=1 pagerank=5.2338e-03 url=www.lawfareblog.com/document-trump-revokes-obama-executive-order-counterterrorism-strike-casualty-reporting
-INFO:root:rank=2 pagerank=5.1297e-03 url=www.lawfareblog.com/trump-administrations-worrying-new-policy-israeli-settlements
-INFO:root:rank=3 pagerank=4.6599e-03 url=www.lawfareblog.com/dc-circuit-overrules-district-courts-due-process-ruling-qasim-v-trump
-INFO:root:rank=4 pagerank=4.5934e-03 url=www.lawfareblog.com/donald-trump-and-politically-weaponized-executive-branch
-INFO:root:rank=5 pagerank=4.3071e-03 url=www.lawfareblog.com/how-trumps-approach-middle-east-ignores-past-future-and-human-condition
-INFO:root:rank=6 pagerank=4.0935e-03 url=www.lawfareblog.com/why-trump-cant-buy-greenland
-INFO:root:rank=7 pagerank=3.7591e-03 url=www.lawfareblog.com/oral-argument-summary-qassim-v-trump
-INFO:root:rank=8 pagerank=3.4509e-03 url=www.lawfareblog.com/dc-circuit-court-denies-trump-rehearing-mazars-case
-INFO:root:rank=9 pagerank=3.4484e-03 url=www.lawfareblog.com/second-circuit-rules-mazars-must-hand-over-trump-tax-returns-new-york-prosecutors
-
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --search_query='iran'
-INFO:root:rank=0 pagerank=4.5746e-03 url=www.lawfareblog.com/praise-presidents-iran-tweets
-INFO:root:rank=1 pagerank=4.4174e-03 url=www.lawfareblog.com/how-us-iran-tensions-could-disrupt-iraqs-fragile-peace
-INFO:root:rank=2 pagerank=2.6928e-03 url=www.lawfareblog.com/cyber-command-operational-update-clarifying-june-2019-iran-operation
-INFO:root:rank=3 pagerank=1.9391e-03 url=www.lawfareblog.com/aborted-iran-strike-fine-line-between-necessity-and-revenge
-INFO:root:rank=4 pagerank=1.5452e-03 url=www.lawfareblog.com/parsing-state-departments-letter-use-force-against-iran
-INFO:root:rank=5 pagerank=1.5357e-03 url=www.lawfareblog.com/iranian-hostage-crisis-and-its-effect-american-politics
-INFO:root:rank=6 pagerank=1.5258e-03 url=www.lawfareblog.com/announcing-united-states-and-use-force-against-iran-new-lawfare-e-book
-INFO:root:rank=7 pagerank=1.4221e-03 url=www.lawfareblog.com/us-names-iranian-revolutionary-guard-terrorist-organization-and-sanctions-international-criminal
-INFO:root:rank=8 pagerank=1.1788e-03 url=www.lawfareblog.com/iran-shoots-down-us-drone-domestic-and-international-legal-implications
-INFO:root:rank=9 pagerank=1.1463e-03 url=www.lawfareblog.com/israel-iran-syria-clash-and-law-use-force
-```
-
-**Part 3:**
-
-The webgraph of lawfareblog.com (i.e. the `P` matrix) naturally contains a lot of structure.
-For example, essentially all pages on the domain have links to the root page <https://lawfareblog.com/> and other "non-article" pages like <https://www.lawfareblog.com/topics> and <https://www.lawfareblog.com/subscribe-lawfare>.
-These pages therefore have a large pagerank.
-We can get a list of the pages with the largest pagerank by running
-
-```
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz
-INFO:root:rank=0 pagerank=2.8741e-01 url=www.lawfareblog.com/lawfare-job-board
-INFO:root:rank=1 pagerank=2.8741e-01 url=www.lawfareblog.com/masthead
-INFO:root:rank=2 pagerank=2.8741e-01 url=www.lawfareblog.com/litigation-documents-related-appointment-matthew-whitaker-acting-attorney-general
-INFO:root:rank=3 pagerank=2.8741e-01 url=www.lawfareblog.com/documents-related-mueller-investigation
-INFO:root:rank=4 pagerank=2.8741e-01 url=www.lawfareblog.com/topics
-INFO:root:rank=5 pagerank=2.8741e-01 url=www.lawfareblog.com/about-lawfare-brief-history-term-and-site
-INFO:root:rank=6 pagerank=2.8741e-01 url=www.lawfareblog.com/snowden-revelations
-INFO:root:rank=7 pagerank=2.8741e-01 url=www.lawfareblog.com/support-lawfare
-INFO:root:rank=8 pagerank=2.8741e-01 url=www.lawfareblog.com/upcoming-events
-INFO:root:rank=9 pagerank=2.8741e-01 url=www.lawfareblog.com/our-comments-policy
-```
-
-Most of these pages are not very interesting, however, because they are not articles,
-and usually when we are performing a web search, we only want articles.
-
-This raises the question: How can we find the most important articles filtering out the non-article pages?
-The answer is to modify the `P` matrix by removing all links to non-article pages.
-
-This raises another question: How do we know if a link is a non-article page?
-Unfortunately, this is a hard question to answer with 100% accuracy,
-but there are many methods that get us most of the way there.
-One easy to implement method is to compute what's called the "in-link ratio" of each node (i.e. the total number of edges with the node as a target divided by the total number of nodes),
-and then remove nodes from the search results with too-high of a ratio.
-The intuition is that non-article pages often appear in the menu of a webpage, and so have links from almost all of the other webpages;
-but article-webpages are unlikely to appear on a menu and so will only have a small number of links from other webpages.
-The `--filter_ratio` parameter causes the code to remove all pages that have an in-link ratio larger than the provided value.
-
-Using this option, we can estimate the most important articles on the domain with the following command:
-```
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --filter_ratio=0.2
-INFO:root:rank=0 pagerank=3.4696e-01 url=www.lawfareblog.com/trump-asks-supreme-court-stay-congressional-subpeona-tax-returns
-INFO:root:rank=1 pagerank=2.9521e-01 url=www.lawfareblog.com/livestream-nov-21-impeachment-hearings-0
-INFO:root:rank=2 pagerank=2.9040e-01 url=www.lawfareblog.com/opening-statement-david-holmes
-INFO:root:rank=3 pagerank=1.5179e-01 url=www.lawfareblog.com/lawfare-podcast-ben-nimmo-whack-mole-game-disinformation
-INFO:root:rank=4 pagerank=1.5099e-01 url=www.lawfareblog.com/todays-headlines-and-commentary-1963
-INFO:root:rank=5 pagerank=1.5099e-01 url=www.lawfareblog.com/todays-headlines-and-commentary-1964
-INFO:root:rank=6 pagerank=1.5071e-01 url=www.lawfareblog.com/lawfare-podcast-week-was-impeachment
-INFO:root:rank=7 pagerank=1.4957e-01 url=www.lawfareblog.com/todays-headlines-and-commentary-1962
-INFO:root:rank=8 pagerank=1.4367e-01 url=www.lawfareblog.com/cyberlaw-podcast-mistrusting-google
-INFO:root:rank=9 pagerank=1.4240e-01 url=www.lawfareblog.com/lawfare-podcast-bonus-edition-gordon-sondland-vs-committee-no-bull
-```
-Notice that the urls in this list look much more like articles than the urls in the previous list.
-
-When Google calculates their `P` matrix for the web,
-they use a similar (but much more complicated) process to modify the `P` matrix in order to reduce spam results.
-The exact formula they use is a jealously guarded secret that they update continuously.
-
-In the case above, notice that we have accidentally removed the blog's most popular article (<www.lawfareblog.com/snowden-revelations>).
-The blog editors believed that Snowden's revelations about NSA spying are so important that they directly put a link to the article on the menu.
-So every single webpage in the domain links to the Snowden article,
-and our "anti-spam" `--filter-ratio` argument removed this article from the list.
-In general, it is a challenging open problem to remove spam from pagerank results,
-and all current solutions rely on careful human tuning and still have lots of false positives and false negatives.
-
-**Part 4:**
-
-Recall from the reading that the runtime of pagerank depends heavily on the eigengap of the `\bar\bar P` matrix,
-and that this eigengap is bounded by the alpha parameter.
-
-Run the following four commands:
-```
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose 
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --alpha=0.99999
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --filter_ratio=0.2
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --filter_ratio=0.2 --alpha=0.99999
-```
-You should notice that the last command takes considerably more iterations to compute the pagerank vector.
-(My code takes 685 iterations for this call, and about 10 iterations for all the others.)
-
-This raises the question: Why does the second command (with the `--alpha` option but without the `--filter_ratio`) option not take a long time to run?
-The answer is that the `P` graph for <https://www.lawfareblog.com> naturally has a large eigengap and so is fast to compute for all alpha values,
-but the modified graph does not have a large eigengap and so requires a small alpha for fast convergence.
-
-Changing the value of alpha also gives us very different pagerank rankings.
-For example, 
-```
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --filter_ratio=0.2
-INFO:root:rank=0 pagerank=3.4696e-01 url=www.lawfareblog.com/trump-asks-supreme-court-stay-congressional-subpeona-tax-returns
-INFO:root:rank=1 pagerank=2.9521e-01 url=www.lawfareblog.com/livestream-nov-21-impeachment-hearings-0
-INFO:root:rank=2 pagerank=2.9040e-01 url=www.lawfareblog.com/opening-statement-david-holmes
-INFO:root:rank=3 pagerank=1.5179e-01 url=www.lawfareblog.com/lawfare-podcast-ben-nimmo-whack-mole-game-disinformation
-INFO:root:rank=4 pagerank=1.5099e-01 url=www.lawfareblog.com/todays-headlines-and-commentary-1963
-INFO:root:rank=5 pagerank=1.5099e-01 url=www.lawfareblog.com/todays-headlines-and-commentary-1964
-INFO:root:rank=6 pagerank=1.5071e-01 url=www.lawfareblog.com/lawfare-podcast-week-was-impeachment
-INFO:root:rank=7 pagerank=1.4957e-01 url=www.lawfareblog.com/todays-headlines-and-commentary-1962
-INFO:root:rank=8 pagerank=1.4367e-01 url=www.lawfareblog.com/cyberlaw-podcast-mistrusting-google
-INFO:root:rank=9 pagerank=1.4240e-01 url=www.lawfareblog.com/lawfare-podcast-bonus-edition-gordon-sondland-vs-committee-no-bull
-
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --filter_ratio=0.2 --alpha=0.99999
-INFO:root:rank=0 pagerank=7.0149e-01 url=www.lawfareblog.com/covid-19-speech-and-surveillance-response
-INFO:root:rank=1 pagerank=7.0149e-01 url=www.lawfareblog.com/lawfare-live-covid-19-speech-and-surveillance
-INFO:root:rank=2 pagerank=1.0552e-01 url=www.lawfareblog.com/cost-using-zero-days
-INFO:root:rank=3 pagerank=3.1755e-02 url=www.lawfareblog.com/lawfare-podcast-former-congressman-brian-baird-and-daniel-schuman-how-congress-can-continue-function
-INFO:root:rank=4 pagerank=2.2040e-02 url=www.lawfareblog.com/events
-INFO:root:rank=5 pagerank=1.6027e-02 url=www.lawfareblog.com/water-wars-increased-us-focus-indo-pacific
-INFO:root:rank=6 pagerank=1.6026e-02 url=www.lawfareblog.com/water-wars-drill-maybe-drill
-INFO:root:rank=7 pagerank=1.6023e-02 url=www.lawfareblog.com/water-wars-disjointed-operations-south-china-sea
-INFO:root:rank=8 pagerank=1.6020e-02 url=www.lawfareblog.com/water-wars-song-oil-and-fire
-INFO:root:rank=9 pagerank=1.6020e-02 url=www.lawfareblog.com/water-wars-sinking-feeling-philippine-china-relations
-```
-
-Which of these rankings is better is entirely subjective,
-and the only way to know if you have the "best" alpha for your application is to try several variations and see what is best.
-If large alphas are good for your application, you can see that there is a trade-off between quality answers and algorithmic runtime.
-We'll be exploring this trade-off more formally in class over the rest of the semester.
-
-## Task 2: the personalization vector
-
-The most interesting applications of pagerank involve the personalization vector.
-Implement the `WebGraph.make_personalization_vector` function so that it outputs a personalization vector tuned for the input query.
-The pseudocode for the function is:
-```
-for each index in the personalization vector:
-    get the url for the index (see the _index_to_url function)
-    check if the url satisfies the input query (see the url_satisfies_query function)
-    if so, set the corresponding index to one
-normalize the vector
-```
-
-**Part 1:**
-
-The command line argument `--personalization_vector_query` will use the function you created above to augment your search with a custom personalization vector.
-If you've implemented the function correctly,
-you should get results similar to:
-```
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --filter_ratio=0.2 --personalization_vector_query='corona'
-INFO:root:rank=0 pagerank=6.3127e-01 url=www.lawfareblog.com/covid-19-speech-and-surveillance-response
-INFO:root:rank=1 pagerank=6.3124e-01 url=www.lawfareblog.com/lawfare-live-covid-19-speech-and-surveillance
-INFO:root:rank=2 pagerank=1.5947e-01 url=www.lawfareblog.com/chinatalk-how-party-takes-its-propaganda-global
-INFO:root:rank=3 pagerank=1.2209e-01 url=www.lawfareblog.com/brexit-not-immune-coronavirus
-INFO:root:rank=4 pagerank=1.2209e-01 url=www.lawfareblog.com/rational-security-my-corona-edition
-INFO:root:rank=5 pagerank=9.3360e-02 url=www.lawfareblog.com/trump-cant-reopen-country-over-state-objections
-INFO:root:rank=6 pagerank=9.1920e-02 url=www.lawfareblog.com/prosecuting-purposeful-coronavirus-exposure-terrorism
-INFO:root:rank=7 pagerank=9.1920e-02 url=www.lawfareblog.com/britains-coronavirus-response
-INFO:root:rank=8 pagerank=7.7770e-02 url=www.lawfareblog.com/lawfare-podcast-united-nations-and-coronavirus-crisis
-INFO:root:rank=9 pagerank=7.2888e-02 url=www.lawfareblog.com/house-oversight-committee-holds-day-two-hearing-government-coronavirus-response
-```
-
-Notice that these results are significantly different than when using the `--search_query` option:
-```
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --filter_ratio=0.2 --search_query='corona'
-INFO:root:rank=0 pagerank=8.1320e-03 url=www.lawfareblog.com/house-oversight-committee-holds-day-two-hearing-government-coronavirus-response
-INFO:root:rank=1 pagerank=7.7908e-03 url=www.lawfareblog.com/lawfare-podcast-united-nations-and-coronavirus-crisis
-INFO:root:rank=2 pagerank=5.2262e-03 url=www.lawfareblog.com/livestream-house-oversight-committee-holds-hearing-government-coronavirus-response
-INFO:root:rank=3 pagerank=3.9584e-03 url=www.lawfareblog.com/britains-coronavirus-response
-INFO:root:rank=4 pagerank=3.8114e-03 url=www.lawfareblog.com/prosecuting-purposeful-coronavirus-exposure-terrorism
-INFO:root:rank=5 pagerank=3.3973e-03 url=www.lawfareblog.com/paper-hearing-experts-debate-digital-contact-tracing-and-coronavirus-privacy-concerns
-INFO:root:rank=6 pagerank=3.3633e-03 url=www.lawfareblog.com/cyberlaw-podcast-how-israel-fighting-coronavirus
-INFO:root:rank=7 pagerank=3.3557e-03 url=www.lawfareblog.com/israeli-emergency-regulations-location-tracking-coronavirus-carriers
-INFO:root:rank=8 pagerank=3.2160e-03 url=www.lawfareblog.com/congress-needs-coronavirus-failsafe-its-too-late
-INFO:root:rank=9 pagerank=3.1036e-03 url=www.lawfareblog.com/why-congress-conducting-business-usual-face-coronavirus
-```
-
-Which results are better?
-Again, that depends on what you mean by "better."
-With the `--personalization_vector_query` option,
-a webpage is important only if other coronavirus webpages also think it's important;
-with the `--search_query` option,
-a webpage is important if any other webpage thinks it's important.
-You'll notice that in the later example, many of the webpages are about Congressional proceedings related to the coronavirus.
-From a strictly coronavirus perspective, these are not very important webpages.
-But in the broader context of national security, these are very important webpages.
-
-Google engineers spend TONs of time fine-tuning their pagerank personalization vectors to remove spam webpages.
-Exactly how they do this is another one of their secrets that they don't publicly talk about.
-
-**Part 2:**
-
-Another use of the `--personalization_vector_query` option is that we can find out what webpages are related to the coronavirus but don't directly mention the coronavirus.
-This can be used to map out what types of topics are similar to the coronavirus.
-
-For example, the following query ranks all webpages by their `corona` importance,
-but removes webpages mentioning `corona` from the results.
-```
-$ python3 pagerank.py --data=data/lawfareblog.csv.gz --filter_ratio=0.2 --personalization_vector_query='corona' --search_query='-corona'
-INFO:root:rank=0 pagerank=6.3127e-01 url=www.lawfareblog.com/covid-19-speech-and-surveillance-response
-INFO:root:rank=1 pagerank=6.3124e-01 url=www.lawfareblog.com/lawfare-live-covid-19-speech-and-surveillance
-INFO:root:rank=2 pagerank=1.5947e-01 url=www.lawfareblog.com/chinatalk-how-party-takes-its-propaganda-global
-INFO:root:rank=3 pagerank=9.3360e-02 url=www.lawfareblog.com/trump-cant-reopen-country-over-state-objections
-INFO:root:rank=4 pagerank=7.0277e-02 url=www.lawfareblog.com/fault-lines-foreign-policy-quarantined
-INFO:root:rank=5 pagerank=6.9713e-02 url=www.lawfareblog.com/lawfare-podcast-mom-and-dad-talk-clinical-trials-pandemic
-INFO:root:rank=6 pagerank=6.4944e-02 url=www.lawfareblog.com/limits-world-health-organization
-INFO:root:rank=7 pagerank=5.9492e-02 url=www.lawfareblog.com/chinatalk-dispatches-shanghai-beijing-and-hong-kong
-INFO:root:rank=8 pagerank=5.1245e-02 url=www.lawfareblog.com/us-moves-dismiss-case-against-company-linked-ira-troll-farm
-INFO:root:rank=9 pagerank=5.1245e-02 url=www.lawfareblog.com/livestream-house-armed-services-holds-hearing-national-security-challenges-north-and-south-america
-```
-You can see that there are many urls about concepts that are obviously related like "covid", "clinical trials", and "quarantine",
-but this algorithm also finds articles about Chinese propaganda and Trump's policy decisions.
-Both of these articles are highly relevant to coronavirus discussions,
-but a simple keyword search for corona or related terms would not find these articles.
-
-<!--
-**Part 3:**
-
-Select another topic related to national security.
-You should experiment with a national security topic other than the coronavirus.
-For example, find out what articles are important to the `iran` topic but do not contain the word `iran`.
-Your goal should be to discover what topics that www.lawfareblog.com considers to be related to the national security topic you choose.
--->
-
-## Submission
-
-1. Create a new repo on github (not a fork of this repo).
+## Submission - Updated to use most_similar()
 
 1. Run the following commands, and paste their output into the code blocks below.
    
    Task 1, part 1:
    ```
-   $ python3 pagerank.py --data=data/small.csv.gz --verbose
+   python3 pagerank.py --data=data/small.csv.gz --verbose
    DEBUG:root:computing indices
-    DEBUG:root:computing values
-    DEBUG:root:i=0 residual=0.3775096535682678
-    DEBUG:root:i=1 residual=0.3134882152080536
-    DEBUG:root:i=2 residual=0.27565914392471313
-    DEBUG:root:i=3 residual=0.21698100864887238
-    DEBUG:root:i=4 residual=0.18984201550483704
-    DEBUG:root:i=5 residual=0.15531453490257263
-    DEBUG:root:i=6 residual=0.13266243040561676
-    DEBUG:root:i=7 residual=0.11062289774417877
-    DEBUG:root:i=8 residual=0.0935135930776596
-    DEBUG:root:i=9 residual=0.07847178727388382
-    DEBUG:root:i=10 residual=0.06611073762178421
-    DEBUG:root:i=11 residual=0.05558084324002266
-    DEBUG:root:i=12 residual=0.04677915573120117
-    DEBUG:root:i=13 residual=0.03934914246201515
-    DEBUG:root:i=14 residual=0.033108580857515335
-    DEBUG:root:i=15 residual=0.027854058891534805
-    DEBUG:root:i=16 residual=0.023434894159436226
-    DEBUG:root:i=17 residual=0.01971624046564102
-    DEBUG:root:i=18 residual=0.016587793827056885
-    DEBUG:root:i=19 residual=0.01395573653280735
-    DEBUG:root:i=20 residual=0.01174134574830532
-    DEBUG:root:i=21 residual=0.009878423996269703
-    DEBUG:root:i=22 residual=0.008310978300869465
-    DEBUG:root:i=23 residual=0.00699202623218298
-    DEBUG:root:i=24 residual=0.005882850848138332
-    DEBUG:root:i=25 residual=0.004949328955262899
-    DEBUG:root:i=26 residual=0.004163879435509443
-    DEBUG:root:i=27 residual=0.0035032741725444794
-    DEBUG:root:i=28 residual=0.002947525354102254
-    DEBUG:root:i=29 residual=0.002479689661413431
-    DEBUG:root:i=30 residual=0.0020862016826868057
-    DEBUG:root:i=31 residual=0.0017553460784256458
-    DEBUG:root:i=32 residual=0.0014767615357413888
-    DEBUG:root:i=33 residual=0.0012426351895555854
-    DEBUG:root:i=34 residual=0.0010450585978105664
-    DEBUG:root:i=35 residual=0.0008793887100182474
-    DEBUG:root:i=36 residual=0.0007399079040624201
-    DEBUG:root:i=37 residual=0.0006227020639926195
-    DEBUG:root:i=38 residual=0.0005236920551396906
-    DEBUG:root:i=39 residual=0.0004406478547025472
-    DEBUG:root:i=40 residual=0.000370639783795923
-    DEBUG:root:i=41 residual=0.0003121042682323605
-    DEBUG:root:i=42 residual=0.00026231163064949214
-    DEBUG:root:i=43 residual=0.0002206446515629068
-    DEBUG:root:i=44 residual=0.00018575278227217495
-    DEBUG:root:i=45 residual=0.00015623871877323836
-    DEBUG:root:i=46 residual=0.00013146748824510723
-    DEBUG:root:i=47 residual=0.00011045498831663281
-    DEBUG:root:i=48 residual=9.31432587094605e-05
-    DEBUG:root:i=49 residual=7.8285884228535e-05
-    DEBUG:root:i=50 residual=6.595712329726666e-05
-    DEBUG:root:i=51 residual=5.543767110793851e-05
-    DEBUG:root:i=52 residual=4.662797800847329e-05
-    DEBUG:root:i=53 residual=3.916498098988086e-05
-    DEBUG:root:i=54 residual=3.3166303182952106e-05
-    DEBUG:root:i=55 residual=2.767469413811341e-05
-    DEBUG:root:i=56 residual=2.3180422431323677e-05
-    DEBUG:root:i=57 residual=1.9749610146391205e-05
-    DEBUG:root:i=58 residual=1.6450476323370822e-05
-    DEBUG:root:i=59 residual=1.3971823136671446e-05
-    DEBUG:root:i=60 residual=1.1601221558521502e-05
-    DEBUG:root:i=61 residual=9.941520147549454e-06
-    DEBUG:root:i=62 residual=8.237256224674638e-06
-    DEBUG:root:i=63 residual=7.062458735163091e-06
-    DEBUG:root:i=64 residual=5.890389729756862e-06
-    DEBUG:root:i=65 residual=4.963853825756814e-06
-    DEBUG:root:i=66 residual=3.989728611486498e-06
-    DEBUG:root:i=67 residual=3.7243364658934297e-06
-    DEBUG:root:i=68 residual=2.826982381520793e-06
-    DEBUG:root:i=69 residual=2.5576227926649153e-06
-    DEBUG:root:i=70 residual=2.092539034492802e-06
-    DEBUG:root:i=71 residual=1.8848643321689451e-06
-    DEBUG:root:i=72 residual=1.5724784816484316e-06
-    DEBUG:root:i=73 residual=1.118282284551242e-06
-    DEBUG:root:i=74 residual=1.1496127854115912e-06
-    DEBUG:root:i=75 residual=8.259061701210157e-07
-    INFO:root:rank=0 pagerank=2.1634e+00 url=4
-    INFO:root:rank=1 pagerank=1.6664e+00 url=6
-    INFO:root:rank=2 pagerank=1.2402e+00 url=5
-    INFO:root:rank=3 pagerank=4.5712e-01 url=2
-    INFO:root:rank=4 pagerank=3.5620e-01 url=3
-    INFO:root:rank=5 pagerank=3.2078e-01 url=1
-
+   DEBUG:root:computing values
+   DEBUG:root:i=0 residual=0.3775096535682678
+   DEBUG:root:i=1 residual=0.3134882152080536
+   DEBUG:root:i=2 residual=0.27565914392471313
+   DEBUG:root:i=3 residual=0.21698100864887238
+   DEBUG:root:i=4 residual=0.18984201550483704
+   DEBUG:root:i=5 residual=0.15531453490257263
+   DEBUG:root:i=6 residual=0.13266243040561676
+   DEBUG:root:i=7 residual=0.11062289774417877
+   DEBUG:root:i=8 residual=0.0935135930776596
+   DEBUG:root:i=9 residual=0.07847178727388382
+   DEBUG:root:i=10 residual=0.06611073762178421
+   DEBUG:root:i=11 residual=0.05558084324002266
+   DEBUG:root:i=12 residual=0.04677915573120117
+   DEBUG:root:i=13 residual=0.03934914246201515
+   DEBUG:root:i=14 residual=0.033108580857515335
+   DEBUG:root:i=15 residual=0.027854058891534805
+   DEBUG:root:i=16 residual=0.023434894159436226
+   DEBUG:root:i=17 residual=0.01971624046564102
+   DEBUG:root:i=18 residual=0.016587793827056885
+   DEBUG:root:i=19 residual=0.01395573653280735
+   DEBUG:root:i=20 residual=0.01174134574830532
+   DEBUG:root:i=21 residual=0.009878423996269703
+   DEBUG:root:i=22 residual=0.008310978300869465
+   DEBUG:root:i=23 residual=0.00699202623218298
+   DEBUG:root:i=24 residual=0.005882850848138332
+   DEBUG:root:i=25 residual=0.004949328955262899
+   DEBUG:root:i=26 residual=0.004163879435509443
+   DEBUG:root:i=27 residual=0.0035032741725444794
+   DEBUG:root:i=28 residual=0.002947525354102254
+   DEBUG:root:i=29 residual=0.002479689661413431
+   DEBUG:root:i=30 residual=0.0020862016826868057
+   DEBUG:root:i=31 residual=0.0017553460784256458
+   DEBUG:root:i=32 residual=0.0014767615357413888
+   DEBUG:root:i=33 residual=0.0012426351895555854
+   DEBUG:root:i=34 residual=0.0010450585978105664
+   DEBUG:root:i=35 residual=0.0008793887100182474
+   DEBUG:root:i=36 residual=0.0007399079040624201
+   DEBUG:root:i=37 residual=0.0006227020639926195
+   DEBUG:root:i=38 residual=0.0005236920551396906
+   DEBUG:root:i=39 residual=0.0004406478547025472
+   DEBUG:root:i=40 residual=0.000370639783795923
+   DEBUG:root:i=41 residual=0.0003121042682323605
+   DEBUG:root:i=42 residual=0.00026231163064949214
+   DEBUG:root:i=43 residual=0.0002206446515629068
+   DEBUG:root:i=44 residual=0.00018575278227217495
+   DEBUG:root:i=45 residual=0.00015623871877323836
+   DEBUG:root:i=46 residual=0.00013146748824510723
+   DEBUG:root:i=47 residual=0.00011045498831663281
+   DEBUG:root:i=48 residual=9.31432587094605e-05
+   DEBUG:root:i=49 residual=7.8285884228535e-05
+   DEBUG:root:i=50 residual=6.595712329726666e-05
+   DEBUG:root:i=51 residual=5.543767110793851e-05
+   DEBUG:root:i=52 residual=4.662797800847329e-05
+   DEBUG:root:i=53 residual=3.916498098988086e-05
+   DEBUG:root:i=54 residual=3.3166303182952106e-05
+   DEBUG:root:i=55 residual=2.767469413811341e-05
+   DEBUG:root:i=56 residual=2.3180422431323677e-05
+   DEBUG:root:i=57 residual=1.9749610146391205e-05
+   DEBUG:root:i=58 residual=1.6450476323370822e-05
+   DEBUG:root:i=59 residual=1.3971823136671446e-05
+   DEBUG:root:i=60 residual=1.1601221558521502e-05
+   DEBUG:root:i=61 residual=9.941520147549454e-06
+   DEBUG:root:i=62 residual=8.237256224674638e-06
+   DEBUG:root:i=63 residual=7.062458735163091e-06
+   DEBUG:root:i=64 residual=5.890389729756862e-06
+   DEBUG:root:i=65 residual=4.963853825756814e-06
+   DEBUG:root:i=66 residual=3.989728611486498e-06
+   DEBUG:root:i=67 residual=3.7243364658934297e-06
+   DEBUG:root:i=68 residual=2.826982381520793e-06
+   DEBUG:root:i=69 residual=2.5576227926649153e-06
+   DEBUG:root:i=70 residual=2.092539034492802e-06
+   DEBUG:root:i=71 residual=1.8848643321689451e-06
+   DEBUG:root:i=72 residual=1.5724784816484316e-06
+   DEBUG:root:i=73 residual=1.118282284551242e-06
+   DEBUG:root:i=74 residual=1.1496127854115912e-06
+   DEBUG:root:i=75 residual=8.259061701210157e-07
+   INFO:root:rank=0 pagerank=2.1634e+00 url=4
+   INFO:root:rank=1 pagerank=1.6664e+00 url=6
+   INFO:root:rank=2 pagerank=1.2402e+00 url=5
+   INFO:root:rank=3 pagerank=4.5712e-01 url=2
+   INFO:root:rank=4 pagerank=3.5620e-01 url=3
+   INFO:root:rank=5 pagerank=3.2078e-01 url=1
    ```
 
    Task 1, part 2:
    ```
-   $ python3 pagerank.py --data=data/lawfareblog.csv.gz --search_query='corona'
+   Noahs-MacBook-Air-7:Project 1 noahbenjamin$ python3 pagerank.py --data=data/lawfareblog.csv.gz --search_query='corona'
+   INFO:gensim.models.keyedvectors:loading projection weights from /Users/noahbenjamin/gensim-data/glove-twitter-50/glove-twitter-50.gz
+   INFO:gensim.utils:KeyedVectors lifecycle event {'msg': 'loaded (1193514, 50) matrix of type float32 from /Users/noahbenjamin/gensim-data/glove-twitter-50/glove-twitter-50.gz', 'binary': False, 'encoding': 'utf8', 'datetime': '2022-12-15T15:02:47.241424', 'gensim': '4.2.0', 'python': '3.10.8 (v3.10.8:aaaf517424, Oct 11 2022, 10:14:40) [Clang 13.0.0 (clang-1300.0.29.30)]', 'platform': 'macOS-13.0.1-x86_64-i386-64bit', 'event': 'load_word2vec_format'}
    INFO:root:rank=0 pagerank=4.5865e-03 url=www.lawfareblog.com/lawfare-podcast-united-nations-and-coronavirus-crisis
-    INFO:root:rank=1 pagerank=4.0464e-03 url=www.lawfareblog.com/house-oversight-committee-holds-day-two-hearing-government-coronavirus-response
-    INFO:root:rank=2 pagerank=2.6118e-03 url=www.lawfareblog.com/britains-coronavirus-response
-    INFO:root:rank=3 pagerank=2.5392e-03 url=www.lawfareblog.com/prosecuting-purposeful-coronavirus-exposure-terrorism
-    INFO:root:rank=4 pagerank=2.3560e-03 url=www.lawfareblog.com/israeli-emergency-regulations-location-tracking-coronavirus-carriers
-    INFO:root:rank=5 pagerank=2.2897e-03 url=www.lawfareblog.com/why-congress-conducting-business-usual-face-coronavirus
-    INFO:root:rank=6 pagerank=2.2729e-03 url=www.lawfareblog.com/livestream-house-oversight-committee-holds-hearing-government-coronavirus-response
-    INFO:root:rank=7 pagerank=2.2522e-03 url=www.lawfareblog.com/congressional-homeland-security-committees-seek-ways-support-state-federal-responses-coronavirus
-    INFO:root:rank=8 pagerank=2.1880e-03 url=www.lawfareblog.com/paper-hearing-experts-debate-digital-contact-tracing-and-coronavirus-privacy-concerns
-    INFO:root:rank=9 pagerank=2.0341e-03 url=www.lawfareblog.com/cyberlaw-podcast-how-israel-fighting-coronavirus
-
-
-   $ python3 pagerank.py --data=data/lawfareblog.csv.gz --search_query='trump'
+   INFO:root:rank=1 pagerank=4.0464e-03 url=www.lawfareblog.com/house-oversight-committee-holds-day-two-hearing-government-coronavirus-response
+   INFO:root:rank=2 pagerank=2.6118e-03 url=www.lawfareblog.com/britains-coronavirus-response
+   INFO:root:rank=3 pagerank=2.5392e-03 url=www.lawfareblog.com/prosecuting-purposeful-coronavirus-exposure-terrorism
+   INFO:root:rank=4 pagerank=2.3560e-03 url=www.lawfareblog.com/israeli-emergency-regulations-location-tracking-coronavirus-carriers
+   INFO:root:rank=5 pagerank=2.2897e-03 url=www.lawfareblog.com/why-congress-conducting-business-usual-face-coronavirus
+   INFO:root:rank=6 pagerank=2.2729e-03 url=www.lawfareblog.com/livestream-house-oversight-committee-holds-hearing-government-coronavirus-response
+   INFO:root:rank=7 pagerank=2.2522e-03 url=www.lawfareblog.com/congressional-homeland-security-committees-seek-ways-support-state-federal-responses-coronavirus
+   INFO:root:rank=8 pagerank=2.1880e-03 url=www.lawfareblog.com/paper-hearing-experts-debate-digital-contact-tracing-and-coronavirus-privacy-concerns
+   INFO:root:rank=9 pagerank=2.0341e-03 url=www.lawfareblog.com/cyberlaw-podcast-how-israel-fighting-coronavirus
+   
+   
+   
+   FINAL OUTPUT HERE: 
+   
+   www.lawfareblog.com/israeli-emergency-regulations-location-tracking-coronavirus-carriers
+   www.lawfareblog.com/prosecuting-purposeful-coronavirus-exposure-terrorism
+   www.lawfareblog.com/paper-hearing-experts-debate-digital-contact-tracing-and-coronavirus-privacy-concerns
+   www.lawfareblog.com/britains-coronavirus-response
+   www.lawfareblog.com/congressional-homeland-security-committees-seek-ways-support-state-federal-responses-coronavirus
+   www.lawfareblog.com/why-congress-conducting-business-usual-face-coronavirus
+   www.lawfareblog.com/livestream-house-oversight-committee-holds-hearing-government-coronavirus-response
+   www.lawfareblog.com/lawfare-podcast-united-nations-and-coronavirus-crisis
+   www.lawfareblog.com/house-oversight-committee-holds-day-two-hearing-government-coronavirus-response
+   www.lawfareblog.com/cyberlaw-podcast-how-israel-fighting-coronavirus
+   
+   python3 pagerank.py --data=data/lawfareblog.csv.gz --search_query='trump'
+   INFO:gensim.models.keyedvectors:loading projection weights from /Users/noahbenjamin/gensim-data/glove-twitter-50/glove-twitter-50.gz
+   INFO:gensim.utils:KeyedVectors lifecycle event {'msg': 'loaded (1193514, 50) matrix of type float32 from /Users/noahbenjamin/gensim-data/glove-twitter-50/glove-twitter-50.gz', 'binary': False, 'encoding': 'utf8', 'datetime': '2022-12-15T15:06:20.757204', 'gensim': '4.2.0', 'python': '3.10.8 (v3.10.8:aaaf517424, Oct 11 2022, 10:14:40) [Clang 13.0.0 (clang-1300.0.29.30)]', 'platform': 'macOS-13.0.1-x86_64-i386-64bit', 'event': 'load_word2vec_format'}
    INFO:root:rank=0 pagerank=6.6261e-02 url=www.lawfareblog.com/donald-trump-and-politically-weaponized-executive-branch
-    INFO:root:rank=1 pagerank=6.0200e-02 url=www.lawfareblog.com/trump-asks-supreme-court-stay-congressional-subpeona-tax-returns
-    INFO:root:rank=2 pagerank=3.4972e-02 url=www.lawfareblog.com/trump-administrations-worrying-new-policy-israeli-settlements
-    INFO:root:rank=3 pagerank=3.2196e-02 url=www.lawfareblog.com/document-trump-revokes-obama-executive-order-counterterrorism-strike-casualty-reporting
-    INFO:root:rank=4 pagerank=3.0974e-02 url=www.lawfareblog.com/dc-circuit-overrules-district-courts-due-process-ruling-qasim-v-trump
-    INFO:root:rank=5 pagerank=2.8463e-02 url=www.lawfareblog.com/how-trumps-approach-middle-east-ignores-past-future-and-human-condition
-    INFO:root:rank=6 pagerank=2.5255e-02 url=www.lawfareblog.com/why-trump-cant-buy-greenland
-    INFO:root:rank=7 pagerank=2.2459e-02 url=www.lawfareblog.com/oral-argument-summary-qassim-v-trump
-    INFO:root:rank=8 pagerank=2.1465e-02 url=www.lawfareblog.com/dc-circuit-court-denies-trump-rehearing-mazars-case
-    INFO:root:rank=9 pagerank=2.1105e-02 url=www.lawfareblog.com/second-circuit-rules-mazars-must-hand-over-trump-tax-returns-new-york-prosecutors
-
-
-   $ python3 pagerank.py --data=data/lawfareblog.csv.gz --search_query='iran'
+   INFO:root:rank=1 pagerank=6.0200e-02 url=www.lawfareblog.com/trump-asks-supreme-court-stay-congressional-subpeona-tax-returns
+   INFO:root:rank=2 pagerank=3.4972e-02 url=www.lawfareblog.com/trump-administrations-worrying-new-policy-israeli-settlements
+   INFO:root:rank=3 pagerank=3.2196e-02 url=www.lawfareblog.com/document-trump-revokes-obama-executive-order-counterterrorism-strike-casualty-reporting
+   INFO:root:rank=4 pagerank=3.0974e-02 url=www.lawfareblog.com/dc-circuit-overrules-district-courts-due-process-ruling-qasim-v-trump
+   INFO:root:rank=5 pagerank=2.8463e-02 url=www.lawfareblog.com/how-trumps-approach-middle-east-ignores-past-future-and-human-condition
+   INFO:root:rank=6 pagerank=2.5255e-02 url=www.lawfareblog.com/why-trump-cant-buy-greenland
+   INFO:root:rank=7 pagerank=2.2459e-02 url=www.lawfareblog.com/oral-argument-summary-qassim-v-trump
+   INFO:root:rank=8 pagerank=2.1465e-02 url=www.lawfareblog.com/dc-circuit-court-denies-trump-rehearing-mazars-case
+   INFO:root:rank=9 pagerank=2.1105e-02 url=www.lawfareblog.com/second-circuit-rules-mazars-must-hand-over-trump-tax-returns-new-york-prosecutors
+   
+   
+   
+   FINAL OUTPUT HERE: 
+   
+   www.lawfareblog.com/donald-trump-and-politically-weaponized-executive-branch
+   www.lawfareblog.com/trump-administrations-worrying-new-policy-israeli-settlements
+   www.lawfareblog.com/why-trump-cant-buy-greenland
+   www.lawfareblog.com/how-trumps-approach-middle-east-ignores-past-future-and-human-condition
+   www.lawfareblog.com/second-circuit-rules-mazars-must-hand-over-trump-tax-returns-new-york-prosecutors
+   www.lawfareblog.com/dc-circuit-court-denies-trump-rehearing-mazars-case
+   www.lawfareblog.com/document-trump-revokes-obama-executive-order-counterterrorism-strike-casualty-reporting
+   www.lawfareblog.com/dc-circuit-overrules-district-courts-due-process-ruling-qasim-v-trump
+   www.lawfareblog.com/oral-argument-summary-qassim-v-trump
+   www.lawfareblog.com/trump-asks-supreme-court-stay-congressional-subpeona-tax-returns
+   
+   python3 pagerank.py --data=data/lawfareblog.csv.gz --search_query='iran'
+   INFO:gensim.models.keyedvectors:loading projection weights from /Users/noahbenjamin/gensim-data/glove-twitter-50/glove-twitter-50.gz
+   INFO:gensim.utils:KeyedVectors lifecycle event {'msg': 'loaded (1193514, 50) matrix of type float32 from /Users/noahbenjamin/gensim-data/glove-twitter-50/glove-twitter-50.gz', 'binary': False, 'encoding': 'utf8', 'datetime': '2022-12-15T15:10:44.092229', 'gensim': '4.2.0', 'python': '3.10.8 (v3.10.8:aaaf517424, Oct 11 2022, 10:14:40) [Clang 13.0.0 (clang-1300.0.29.30)]', 'platform': 'macOS-13.0.1-x86_64-i386-64bit', 'event': 'load_word2vec_format'}
    INFO:root:rank=0 pagerank=6.6149e-02 url=www.lawfareblog.com/praise-presidents-iran-tweets
-    INFO:root:rank=1 pagerank=2.9202e-02 url=www.lawfareblog.com/how-us-iran-tensions-could-disrupt-iraqs-fragile-peace
-    INFO:root:rank=2 pagerank=1.7711e-02 url=www.lawfareblog.com/cyber-command-operational-update-clarifying-june-2019-iran-operation
-    INFO:root:rank=3 pagerank=1.4606e-02 url=www.lawfareblog.com/aborted-iran-strike-fine-line-between-necessity-and-revenge
-    INFO:root:rank=4 pagerank=8.4519e-03 url=www.lawfareblog.com/iranian-hostage-crisis-and-its-effect-american-politics
-    INFO:root:rank=5 pagerank=8.3997e-03 url=www.lawfareblog.com/parsing-state-departments-letter-use-force-against-iran
-    INFO:root:rank=6 pagerank=8.2589e-03 url=www.lawfareblog.com/announcing-united-states-and-use-force-against-iran-new-lawfare-e-book
-    INFO:root:rank=7 pagerank=8.0568e-03 url=www.lawfareblog.com/trump-moves-cut-irans-oil-revenues-whats-his-endgame
-    INFO:root:rank=8 pagerank=7.1946e-03 url=www.lawfareblog.com/us-names-iranian-revolutionary-guard-terrorist-organization-and-sanctions-international-criminal
-    INFO:root:rank=9 pagerank=5.9410e-03 url=www.lawfareblog.com/iran-shoots-down-us-drone-domestic-and-international-legal-implications
+   INFO:root:rank=1 pagerank=3.4136e-02 url=www.lawfareblog.com/update-military-commissions-continued-health-issues-recusal-motion-and-new-cell-al-iraqi
+   INFO:root:rank=2 pagerank=2.9202e-02 url=www.lawfareblog.com/how-us-iran-tensions-could-disrupt-iraqs-fragile-peace
+   INFO:root:rank=3 pagerank=2.8810e-02 url=www.lawfareblog.com/haftar-attacking-tripoli-us-needs-re-engage-libya
+   INFO:root:rank=4 pagerank=2.3396e-02 url=www.lawfareblog.com/france-makes-play-try-foreign-fighters-iraq
+   INFO:root:rank=5 pagerank=1.7711e-02 url=www.lawfareblog.com/cyber-command-operational-update-clarifying-june-2019-iran-operation
+   INFO:root:rank=6 pagerank=1.4606e-02 url=www.lawfareblog.com/aborted-iran-strike-fine-line-between-necessity-and-revenge
+   INFO:root:rank=7 pagerank=1.4579e-02 url=www.lawfareblog.com/its-not-only-iraq-and-syria
+   INFO:root:rank=8 pagerank=1.2143e-02 url=www.lawfareblog.com/document-sens-kaine-and-young-introduce-bill-revoke-iraq-force-authorizations
+   INFO:root:rank=9 pagerank=1.1965e-02 url=www.lawfareblog.com/congress-us-policy-toward-syria-and-turkey-overview-recent-hearings
+   
+   
+   
+   FINAL OUTPUT HERE: 
+   
+   www.lawfareblog.com/how-us-iran-tensions-could-disrupt-iraqs-fragile-peace
+   www.lawfareblog.com/praise-presidents-iran-tweets
+   www.lawfareblog.com/congress-us-policy-toward-syria-and-turkey-overview-recent-hearings
+   www.lawfareblog.com/aborted-iran-strike-fine-line-between-necessity-and-revenge
+   www.lawfareblog.com/cyber-command-operational-update-clarifying-june-2019-iran-operation
+   www.lawfareblog.com/haftar-attacking-tripoli-us-needs-re-engage-libya
+   www.lawfareblog.com/france-makes-play-try-foreign-fighters-iraq
+   www.lawfareblog.com/update-military-commissions-continued-health-issues-recusal-motion-and-new-cell-al-iraqi
+   www.lawfareblog.com/its-not-only-iraq-and-syria
+   www.lawfareblog.com/document-sens-kaine-and-young-introduce-bill-revoke-iraq-force-authorizations
 
    ```
 
    Task 1, part 3:
    ```
-   $ python3 pagerank.py --data=data/lawfareblog.csv.gz
+   python3 pagerank.py --data=data/lawfareblog.csv.gz
    INFO:root:rank=0 pagerank=8.4193e+00 url=www.lawfareblog.com/litigation-documents-related-appointment-matthew-whitaker-acting-attorney-general
-    INFO:root:rank=1 pagerank=8.4193e+00 url=www.lawfareblog.com/lawfare-job-board
-    INFO:root:rank=2 pagerank=8.4193e+00 url=www.lawfareblog.com/documents-related-mueller-investigation
-    INFO:root:rank=3 pagerank=8.4193e+00 url=www.lawfareblog.com/litigation-documents-resources-related-travel-ban
-    INFO:root:rank=4 pagerank=8.4193e+00 url=www.lawfareblog.com/subscribe-lawfare
-    INFO:root:rank=5 pagerank=8.4193e+00 url=www.lawfareblog.com/masthead
-    INFO:root:rank=6 pagerank=8.4193e+00 url=www.lawfareblog.com/topics
-    INFO:root:rank=7 pagerank=8.4193e+00 url=www.lawfareblog.com/our-comments-policy
-    INFO:root:rank=8 pagerank=8.4193e+00 url=www.lawfareblog.com/upcoming-events
-    INFO:root:rank=9 pagerank=8.4193e+00 url=www.lawfareblog.com/about-lawfare-brief-history-term-and-site
+   INFO:root:rank=1 pagerank=8.4193e+00 url=www.lawfareblog.com/lawfare-job-board
+   INFO:root:rank=2 pagerank=8.4193e+00 url=www.lawfareblog.com/documents-related-mueller-investigation
+   INFO:root:rank=3 pagerank=8.4193e+00 url=www.lawfareblog.com/litigation-documents-resources-related-travel-ban
+   INFO:root:rank=4 pagerank=8.4193e+00 url=www.lawfareblog.com/subscribe-lawfare
+   INFO:root:rank=5 pagerank=8.4193e+00 url=www.lawfareblog.com/masthead
+   INFO:root:rank=6 pagerank=8.4193e+00 url=www.lawfareblog.com/topics
+   INFO:root:rank=7 pagerank=8.4193e+00 url=www.lawfareblog.com/our-comments-policy
+   INFO:root:rank=8 pagerank=8.4193e+00 url=www.lawfareblog.com/upcoming-events
+   INFO:root:rank=9 pagerank=8.4193e+00 url=www.lawfareblog.com/about-lawfare-brief-history-term-and-site
 
-
-   $ python3 pagerank.py --data=data/lawfareblog.csv.gz --filter_ratio=0.2
+   python3 pagerank.py --data=data/lawfareblog.csv.gz --filter_ratio=0.2
    INFO:root:rank=0 pagerank=4.6096e+00 url=www.lawfareblog.com/trump-asks-supreme-court-stay-congressional-subpeona-tax-returns
-    INFO:root:rank=1 pagerank=2.9870e+00 url=www.lawfareblog.com/livestream-nov-21-impeachment-hearings-0
-    INFO:root:rank=2 pagerank=2.9672e+00 url=www.lawfareblog.com/opening-statement-david-holmes
-    INFO:root:rank=3 pagerank=2.0175e+00 url=www.lawfareblog.com/senate-examines-threats-homeland
-    INFO:root:rank=4 pagerank=1.8771e+00 url=www.lawfareblog.com/what-make-first-day-impeachment-hearings
-    INFO:root:rank=5 pagerank=1.8764e+00 url=www.lawfareblog.com/livestream-house-armed-services-committee-hearing-f-35-program
-    INFO:root:rank=6 pagerank=1.8695e+00 url=www.lawfareblog.com/whats-house-resolution-impeachment
-    INFO:root:rank=7 pagerank=1.7657e+00 url=www.lawfareblog.com/congress-us-policy-toward-syria-and-turkey-overview-recent-hearings
-    INFO:root:rank=8 pagerank=1.6809e+00 url=www.lawfareblog.com/summary-david-holmess-deposition-testimony
-    INFO:root:rank=9 pagerank=9.8355e-01 url=www.lawfareblog.com/events
-
+   INFO:root:rank=1 pagerank=2.9870e+00 url=www.lawfareblog.com/livestream-nov-21-impeachment-hearings-0
+   INFO:root:rank=2 pagerank=2.9672e+00 url=www.lawfareblog.com/opening-statement-david-holmes
+   INFO:root:rank=3 pagerank=2.0175e+00 url=www.lawfareblog.com/senate-examines-threats-homeland
+   INFO:root:rank=4 pagerank=1.8771e+00 url=www.lawfareblog.com/what-make-first-day-impeachment-hearings
+   INFO:root:rank=5 pagerank=1.8764e+00 url=www.lawfareblog.com/livestream-house-armed-services-committee-hearing-f-35-program
+   INFO:root:rank=6 pagerank=1.8695e+00 url=www.lawfareblog.com/whats-house-resolution-impeachment
+   INFO:root:rank=7 pagerank=1.7657e+00 url=www.lawfareblog.com/congress-us-policy-toward-syria-and-turkey-overview-recent-hearings
+   INFO:root:rank=8 pagerank=1.6809e+00 url=www.lawfareblog.com/summary-david-holmess-deposition-testimony
+   INFO:root:rank=9 pagerank=9.8355e-01 url=www.lawfareblog.com/events
    ```
 
    Task 1, part 4:
    ```
-   $ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose 
+   python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose 
    DEBUG:root:computing indices
-    DEBUG:root:computing values
-    DEBUG:root:i=0 residual=20.519113540649414
-    DEBUG:root:i=1 residual=6.111500263214111
-    DEBUG:root:i=2 residual=1.9213933944702148
-    DEBUG:root:i=3 residual=0.5894440412521362
-    DEBUG:root:i=4 residual=0.17696045339107513
-    DEBUG:root:i=5 residual=0.05283278226852417
-    DEBUG:root:i=6 residual=0.016079027205705643
-    DEBUG:root:i=7 residual=0.005210632458329201
-    DEBUG:root:i=8 residual=0.0019537066109478474
-    DEBUG:root:i=9 residual=0.0009344476857222617
-    DEBUG:root:i=10 residual=0.0005896315560676157
-    DEBUG:root:i=11 residual=0.00044961803359910846
-    DEBUG:root:i=12 residual=0.0003635356551967561
-    DEBUG:root:i=13 residual=0.000304026179946959
-    DEBUG:root:i=14 residual=0.0002544544404372573
-    DEBUG:root:i=15 residual=0.0002214041887782514
-    DEBUG:root:i=16 residual=0.00018175305740442127
-    DEBUG:root:i=17 residual=0.00015861692372709513
-    DEBUG:root:i=18 residual=0.0001354878768324852
-    DEBUG:root:i=19 residual=0.00010905363160418347
-    DEBUG:root:i=20 residual=9.582996426615864e-05
-    DEBUG:root:i=21 residual=8.261331095127389e-05
-    DEBUG:root:i=22 residual=6.609420233871788e-05
-    DEBUG:root:i=23 residual=5.948157559032552e-05
-    DEBUG:root:i=24 residual=5.287045132718049e-05
-    DEBUG:root:i=25 residual=4.296085171517916e-05
-    DEBUG:root:i=26 residual=3.634976746980101e-05
-    DEBUG:root:i=27 residual=2.9742914193775505e-05
-    DEBUG:root:i=28 residual=2.6435980544192716e-05
-    DEBUG:root:i=29 residual=2.3131800844566897e-05
-    DEBUG:root:i=30 residual=1.9827610231004655e-05
-    DEBUG:root:i=31 residual=1.3219563697930425e-05
-    DEBUG:root:i=32 residual=1.6520900317118503e-05
-    DEBUG:root:i=33 residual=9.917550414684229e-06
-    DEBUG:root:i=34 residual=6.6084767240681686e-06
-    DEBUG:root:i=35 residual=1.3215736544225365e-05
-    DEBUG:root:i=36 residual=6.611599928874057e-06
-    DEBUG:root:i=37 residual=3.3059184261219343e-06
-    DEBUG:root:i=38 residual=3.304282927274471e-06
-    DEBUG:root:i=39 residual=3.3057854125218e-06
-    DEBUG:root:i=40 residual=3.304204938103794e-06
-    DEBUG:root:i=41 residual=5.966464300399821e-08
-    INFO:root:rank=0 pagerank=8.4193e+00 url=www.lawfareblog.com/litigation-documents-related-appointment-matthew-whitaker-acting-attorney-general
-    INFO:root:rank=1 pagerank=8.4193e+00 url=www.lawfareblog.com/lawfare-job-board
-    INFO:root:rank=2 pagerank=8.4193e+00 url=www.lawfareblog.com/documents-related-mueller-investigation
-    INFO:root:rank=3 pagerank=8.4193e+00 url=www.lawfareblog.com/litigation-documents-resources-related-travel-ban
-    INFO:root:rank=4 pagerank=8.4193e+00 url=www.lawfareblog.com/subscribe-lawfare
-    INFO:root:rank=5 pagerank=8.4193e+00 url=www.lawfareblog.com/masthead
-    INFO:root:rank=6 pagerank=8.4193e+00 url=www.lawfareblog.com/topics
-    INFO:root:rank=7 pagerank=8.4193e+00 url=www.lawfareblog.com/our-comments-policy
-    INFO:root:rank=8 pagerank=8.4193e+00 url=www.lawfareblog.com/upcoming-events
-    INFO:root:rank=9 pagerank=8.4193e+00 url=www.lawfareblog.com/about-lawfare-brief-history-term-and-site
+   DEBUG:root:computing values
+   DEBUG:root:i=0 residual=20.519113540649414
+   DEBUG:root:i=1 residual=6.111500263214111
+   DEBUG:root:i=2 residual=1.9213933944702148
+   DEBUG:root:i=3 residual=0.5894440412521362
+   DEBUG:root:i=4 residual=0.17696045339107513
+   DEBUG:root:i=5 residual=0.05283278226852417
+   DEBUG:root:i=6 residual=0.016079027205705643
+   DEBUG:root:i=7 residual=0.005210632458329201
+   DEBUG:root:i=8 residual=0.0019537066109478474
+   DEBUG:root:i=9 residual=0.0009344476857222617
+   DEBUG:root:i=10 residual=0.0005896315560676157
+   DEBUG:root:i=11 residual=0.00044961803359910846
+   DEBUG:root:i=12 residual=0.0003635356551967561
+   DEBUG:root:i=13 residual=0.000304026179946959
+   DEBUG:root:i=14 residual=0.0002544544404372573
+   DEBUG:root:i=15 residual=0.0002214041887782514
+   DEBUG:root:i=16 residual=0.00018175305740442127
+   DEBUG:root:i=17 residual=0.00015861692372709513
+   DEBUG:root:i=18 residual=0.0001354878768324852
+   DEBUG:root:i=19 residual=0.00010905363160418347
+   DEBUG:root:i=20 residual=9.582996426615864e-05
+   DEBUG:root:i=21 residual=8.261331095127389e-05
+   DEBUG:root:i=22 residual=6.609420233871788e-05
+   DEBUG:root:i=23 residual=5.948157559032552e-05
+   DEBUG:root:i=24 residual=5.287045132718049e-05
+   DEBUG:root:i=25 residual=4.296085171517916e-05
+   DEBUG:root:i=26 residual=3.634976746980101e-05
+   DEBUG:root:i=27 residual=2.9742914193775505e-05
+   DEBUG:root:i=28 residual=2.6435980544192716e-05
+   DEBUG:root:i=29 residual=2.3131800844566897e-05
+   DEBUG:root:i=30 residual=1.9827610231004655e-05
+   DEBUG:root:i=31 residual=1.3219563697930425e-05
+   DEBUG:root:i=32 residual=1.6520900317118503e-05
+   DEBUG:root:i=33 residual=9.917550414684229e-06
+   DEBUG:root:i=34 residual=6.6084767240681686e-06
+   DEBUG:root:i=35 residual=1.3215736544225365e-05
+   DEBUG:root:i=36 residual=6.611599928874057e-06
+   DEBUG:root:i=37 residual=3.3059184261219343e-06
+   DEBUG:root:i=38 residual=3.304282927274471e-06
+   DEBUG:root:i=39 residual=3.3057854125218e-06
+   DEBUG:root:i=40 residual=3.304204938103794e-06
+   DEBUG:root:i=41 residual=5.966464300399821e-08
+   INFO:root:rank=0 pagerank=8.4193e+00 url=www.lawfareblog.com/litigation-documents-related-appointment-matthew-whitaker-acting-attorney-general
+   INFO:root:rank=1 pagerank=8.4193e+00 url=www.lawfareblog.com/lawfare-job-board
+   INFO:root:rank=2 pagerank=8.4193e+00 url=www.lawfareblog.com/documents-related-mueller-investigation
+   INFO:root:rank=3 pagerank=8.4193e+00 url=www.lawfareblog.com/litigation-documents-resources-related-travel-ban
+   INFO:root:rank=4 pagerank=8.4193e+00 url=www.lawfareblog.com/subscribe-lawfare
+   INFO:root:rank=5 pagerank=8.4193e+00 url=www.lawfareblog.com/masthead
+   INFO:root:rank=6 pagerank=8.4193e+00 url=www.lawfareblog.com/topics
+   INFO:root:rank=7 pagerank=8.4193e+00 url=www.lawfareblog.com/our-comments-policy
+   INFO:root:rank=8 pagerank=8.4193e+00 url=www.lawfareblog.com/upcoming-events
+   INFO:root:rank=9 pagerank=8.4193e+00 url=www.lawfareblog.com/about-lawfare-brief-history-term-and-site
 
-   $ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --alpha=0.99999
+   python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --alpha=0.99999
    DEBUG:root:computing indices
-    DEBUG:root:computing values
-    DEBUG:root:i=0 residual=24.13996124267578
-    DEBUG:root:i=1 residual=8.458998680114746
-    DEBUG:root:i=2 residual=3.1286847591400146
-    DEBUG:root:i=3 residual=1.124982476234436
-    DEBUG:root:i=4 residual=0.3952835202217102
-    DEBUG:root:i=5 residual=0.13689270615577698
-    DEBUG:root:i=6 residual=0.04697100818157196
-    DEBUG:root:i=7 residual=0.015966199338436127
-    DEBUG:root:i=8 residual=0.005269138608127832
-    DEBUG:root:i=9 residual=0.001595006207935512
-    DEBUG:root:i=10 residual=0.0003629165585152805
-    DEBUG:root:i=11 residual=0.00015495774277951568
-    DEBUG:root:i=12 residual=0.0002625398337841034
-    DEBUG:root:i=13 residual=0.0002975492679979652
-    DEBUG:root:i=14 residual=0.0003040328447241336
-    DEBUG:root:i=15 residual=0.00030732262530364096
-    DEBUG:root:i=16 residual=0.0003172335564158857
-    DEBUG:root:i=17 residual=0.00032054053735919297
-    DEBUG:root:i=18 residual=0.00032054216717369854
-    DEBUG:root:i=19 residual=0.0003172409487888217
-    DEBUG:root:i=20 residual=0.00031723821302875876
-    DEBUG:root:i=21 residual=0.0003172381839249283
-    DEBUG:root:i=22 residual=0.0003172379801981151
-    DEBUG:root:i=23 residual=0.00031723815482109785
-    DEBUG:root:i=24 residual=0.000317236699629575
-    DEBUG:root:i=25 residual=0.0003172394644934684
-    DEBUG:root:i=26 residual=0.0003172381257172674
-    DEBUG:root:i=27 residual=0.0003139354521408677
-    DEBUG:root:i=28 residual=0.0003139339969493449
-    DEBUG:root:i=29 residual=0.00031723675783723593
-    DEBUG:root:i=30 residual=0.0003172381257172674
-    DEBUG:root:i=31 residual=0.00031723809661343694
-    DEBUG:root:i=32 residual=0.0003172381257172674
-    DEBUG:root:i=33 residual=0.000317238038405776
-    DEBUG:root:i=34 residual=0.0003205407992936671
-    DEBUG:root:i=35 residual=0.00031724091968499124
-    DEBUG:root:i=36 residual=0.0003172382421325892
-    DEBUG:root:i=37 residual=0.0003172381257172674
-    DEBUG:root:i=38 residual=0.00031393548124469817
-    DEBUG:root:i=39 residual=0.00031723667052574456
-    DEBUG:root:i=40 residual=0.0003172380675096065
-    DEBUG:root:i=41 residual=0.0003172380675096065
-    DEBUG:root:i=42 residual=0.0003172381257172674
-    DEBUG:root:i=43 residual=0.00031723821302875876
-    DEBUG:root:i=44 residual=0.0003139353939332068
-    DEBUG:root:i=45 residual=0.00031723672873340547
-    DEBUG:root:i=46 residual=0.0003172380675096065
-    DEBUG:root:i=47 residual=0.0003172381257172674
-    DEBUG:root:i=48 residual=0.0003205407701898366
-    DEBUG:root:i=49 residual=0.00032054365146905184
-    DEBUG:root:i=50 residual=0.0003172395518049598
-    DEBUG:root:i=51 residual=0.0003172381839249283
-    DEBUG:root:i=52 residual=0.0003172381839249283
-    DEBUG:root:i=53 residual=0.0003172394644934684
-    DEBUG:root:i=54 residual=0.00031723821302875876
-    DEBUG:root:i=55 residual=0.0003172380675096065
-    DEBUG:root:i=56 residual=0.0003172380675096065
-    DEBUG:root:i=57 residual=0.000317238038405776
-    DEBUG:root:i=58 residual=0.0003172381839249283
-    DEBUG:root:i=59 residual=0.0003172395518049598
-    DEBUG:root:i=60 residual=0.0003172381257172674
-    DEBUG:root:i=61 residual=0.0003172380675096065
-    DEBUG:root:i=62 residual=0.0003172380675096065
-    DEBUG:root:i=63 residual=0.00031723675783723593
-    DEBUG:root:i=64 residual=0.000317238038405776
-    DEBUG:root:i=65 residual=0.00031393548124469817
-    DEBUG:root:i=66 residual=0.00031723667052574456
-    DEBUG:root:i=67 residual=0.0003172395227011293
-    DEBUG:root:i=68 residual=0.0003172381257172674
-    DEBUG:root:i=69 residual=0.0003172382421325892
-    DEBUG:root:i=70 residual=0.00031723815482109785
-    DEBUG:root:i=71 residual=0.000317238038405776
-    DEBUG:root:i=72 residual=0.00031393542303703725
-    DEBUG:root:i=73 residual=0.00031723667052574456
-    DEBUG:root:i=74 residual=0.00031723809661343694
-    DEBUG:root:i=75 residual=0.0003172395227011293
-    DEBUG:root:i=76 residual=0.0003172381839249283
-    DEBUG:root:i=77 residual=0.00031723815482109785
-    DEBUG:root:i=78 residual=0.000317238038405776
-    DEBUG:root:i=79 residual=0.0003172381257172674
-    DEBUG:root:i=80 residual=0.0003205394314136356
-    DEBUG:root:i=81 residual=0.00031724091968499124
-    DEBUG:root:i=82 residual=0.00031723815482109785
-    DEBUG:root:i=83 residual=0.0003172380675096065
-    DEBUG:root:i=84 residual=0.0003172380675096065
-    DEBUG:root:i=85 residual=0.00031723815482109785
-    DEBUG:root:i=86 residual=0.00031723815482109785
-    DEBUG:root:i=87 residual=0.0003172395227011293
-    DEBUG:root:i=88 residual=0.0003172381839249283
-    DEBUG:root:i=89 residual=0.00031723809661343694
-    DEBUG:root:i=90 residual=0.0003172381257172674
-    DEBUG:root:i=91 residual=0.000317236699629575
-    DEBUG:root:i=92 residual=0.0003172381839249283
-    DEBUG:root:i=93 residual=0.0003172395227011293
-    DEBUG:root:i=94 residual=0.0003172381257172674
-    DEBUG:root:i=95 residual=0.0003172380675096065
-    DEBUG:root:i=96 residual=0.00031393548124469817
-    DEBUG:root:i=97 residual=0.00031723672873340547
-    DEBUG:root:i=98 residual=0.00031723667052574456
-    DEBUG:root:i=99 residual=0.0003172381257172674
-    DEBUG:root:i=100 residual=0.0003172379801981151
-    DEBUG:root:i=101 residual=0.00031723949359729886
-    DEBUG:root:i=102 residual=0.0003172381839249283
-    DEBUG:root:i=103 residual=0.00031723815482109785
-    DEBUG:root:i=104 residual=0.0003205407992936671
-    DEBUG:root:i=105 residual=0.0003172395518049598
-    DEBUG:root:i=106 residual=0.00031723943538963795
-    DEBUG:root:i=107 residual=0.000320540857501328
-    DEBUG:root:i=108 residual=0.0003172395518049598
-    DEBUG:root:i=109 residual=0.0003172381839249283
-    DEBUG:root:i=110 residual=0.0003172381257172674
-    DEBUG:root:i=111 residual=0.00031723943538963795
-    DEBUG:root:i=112 residual=0.00032054088660515845
-    DEBUG:root:i=113 residual=0.00031723949359729886
-    DEBUG:root:i=114 residual=0.00031723815482109785
-    DEBUG:root:i=115 residual=0.0003172381257172674
-    DEBUG:root:i=116 residual=0.0003172396100126207
-    DEBUG:root:i=117 residual=0.0003172381257172674
-    DEBUG:root:i=118 residual=0.000317238038405776
-    DEBUG:root:i=119 residual=0.0003172381839249283
-    DEBUG:root:i=120 residual=0.00031723809661343694
-    DEBUG:root:i=121 residual=0.0003172381257172674
-    DEBUG:root:i=122 residual=0.000317236699629575
-    DEBUG:root:i=123 residual=0.0003172394644934684
-    DEBUG:root:i=124 residual=0.0003172381257172674
-    DEBUG:root:i=125 residual=0.0003172381257172674
-    DEBUG:root:i=126 residual=0.00031723821302875876
-    DEBUG:root:i=127 residual=0.00031723809661343694
-    DEBUG:root:i=128 residual=0.00031393542303703725
-    DEBUG:root:i=129 residual=0.000317236699629575
-    DEBUG:root:i=130 residual=0.0003139354521408677
-    DEBUG:root:i=131 residual=0.0003172366414219141
-    DEBUG:root:i=132 residual=0.0003172395227011293
-    DEBUG:root:i=133 residual=0.00031723809661343694
-    DEBUG:root:i=134 residual=0.0003172381257172674
-    DEBUG:root:i=135 residual=0.0003172381257172674
-    DEBUG:root:i=136 residual=0.00031723821302875876
-    DEBUG:root:i=137 residual=0.0003172381257172674
-    DEBUG:root:i=138 residual=0.00031723809661343694
-    DEBUG:root:i=139 residual=0.0003172394644934684
-    DEBUG:root:i=140 residual=0.000317236699629575
-    DEBUG:root:i=141 residual=0.00031723821302875876
-    DEBUG:root:i=142 residual=0.00031723809661343694
-    DEBUG:root:i=143 residual=0.000320540857501328
-    DEBUG:root:i=144 residual=0.0003172409487888217
-    DEBUG:root:i=145 residual=0.00031723815482109785
-    DEBUG:root:i=146 residual=0.0003172381839249283
-    DEBUG:root:i=147 residual=0.0003172381257172674
-    DEBUG:root:i=148 residual=0.0003172381257172674
-    DEBUG:root:i=149 residual=0.0003172381257172674
-    DEBUG:root:i=150 residual=0.0003172394644934684
-    DEBUG:root:i=151 residual=0.0003205407992936671
-    DEBUG:root:i=152 residual=0.000320542196277529
-    DEBUG:root:i=153 residual=0.00031723958090879023
-    DEBUG:root:i=154 residual=0.0003172395227011293
-    DEBUG:root:i=155 residual=0.00031723821302875876
-    DEBUG:root:i=156 residual=0.000317238038405776
-    DEBUG:root:i=157 residual=0.0003172381257172674
-    DEBUG:root:i=158 residual=0.0003139354521408677
-    DEBUG:root:i=159 residual=0.00031723672873340547
-    DEBUG:root:i=160 residual=0.0003172381257172674
-    DEBUG:root:i=161 residual=0.000317238038405776
-    DEBUG:root:i=162 residual=0.0003172395227011293
-    DEBUG:root:i=163 residual=0.00031723672873340547
-    DEBUG:root:i=164 residual=0.0003172381839249283
-    DEBUG:root:i=165 residual=0.0003139354521408677
-    DEBUG:root:i=166 residual=0.000320539518725127
-    DEBUG:root:i=167 residual=0.00031723943538963795
-    DEBUG:root:i=168 residual=0.0003172395227011293
-    DEBUG:root:i=169 residual=0.0003172381839249283
-    DEBUG:root:i=170 residual=0.0003172381257172674
-    DEBUG:root:i=171 residual=0.0003172381257172674
-    DEBUG:root:i=172 residual=0.000317238038405776
-    DEBUG:root:i=173 residual=0.0003172381257172674
-    DEBUG:root:i=174 residual=0.000317238038405776
-    DEBUG:root:i=175 residual=0.0003172395227011293
-    DEBUG:root:i=176 residual=0.0003205407992936671
-    DEBUG:root:i=177 residual=0.0003172395227011293
-    DEBUG:root:i=178 residual=0.0003139354521408677
-    DEBUG:root:i=179 residual=0.00031723672873340547
-    DEBUG:root:i=180 residual=0.00031723815482109785
-    DEBUG:root:i=181 residual=0.00031723949359729886
-    DEBUG:root:i=182 residual=0.00032054088660515845
-    DEBUG:root:i=183 residual=0.0003172395227011293
-    DEBUG:root:i=184 residual=0.000317236699629575
-    DEBUG:root:i=185 residual=0.0003172380675096065
-    DEBUG:root:i=186 residual=0.0003172395518049598
-    DEBUG:root:i=187 residual=0.0003172381839249283
-    DEBUG:root:i=188 residual=0.0003172381257172674
-    DEBUG:root:i=189 residual=0.0003139354521408677
-    DEBUG:root:i=190 residual=0.00031723672873340547
-    DEBUG:root:i=191 residual=0.0003172381257172674
-    DEBUG:root:i=192 residual=0.0003172380675096065
-    DEBUG:root:i=193 residual=0.00031723815482109785
-    DEBUG:root:i=194 residual=0.0003172395227011293
-    DEBUG:root:i=195 residual=0.00031393536482937634
-    DEBUG:root:i=196 residual=0.00031723672873340547
-    DEBUG:root:i=197 residual=0.000317238038405776
-    DEBUG:root:i=198 residual=0.00031723815482109785
-    DEBUG:root:i=199 residual=0.0003172381257172674
-    DEBUG:root:i=200 residual=0.0003172381257172674
-    DEBUG:root:i=201 residual=0.00031723661231808364
-    DEBUG:root:i=202 residual=0.0003172395227011293
-    DEBUG:root:i=203 residual=0.0003172381257172674
-    DEBUG:root:i=204 residual=0.0003172382421325892
-    DEBUG:root:i=205 residual=0.0003172381257172674
-    DEBUG:root:i=206 residual=0.00032054074108600616
-    DEBUG:root:i=207 residual=0.0003172409487888217
-    DEBUG:root:i=208 residual=0.0003172381257172674
-    DEBUG:root:i=209 residual=0.0003172381839249283
-    DEBUG:root:i=210 residual=0.0003172381257172674
-    DEBUG:root:i=211 residual=0.0003172381257172674
-    DEBUG:root:i=212 residual=0.000317238038405776
-    DEBUG:root:i=213 residual=0.0003172381257172674
-    DEBUG:root:i=214 residual=0.0003172395227011293
-    DEBUG:root:i=215 residual=0.00031723821302875876
-    DEBUG:root:i=216 residual=0.00031723815482109785
-    DEBUG:root:i=217 residual=0.00031723800930194557
-    DEBUG:root:i=218 residual=0.0003172381257172674
-    DEBUG:root:i=219 residual=0.0003172381839249283
-    DEBUG:root:i=220 residual=0.0003172395227011293
-    DEBUG:root:i=221 residual=0.00031723815482109785
-    DEBUG:root:i=222 residual=0.0003139354521408677
-    DEBUG:root:i=223 residual=0.00031723672873340547
-    DEBUG:root:i=224 residual=0.00031723661231808364
-    DEBUG:root:i=225 residual=0.00031393542303703725
-    DEBUG:root:i=226 residual=0.00031723672873340547
-    DEBUG:root:i=227 residual=0.0003172381257172674
-    DEBUG:root:i=228 residual=0.000317238038405776
-    DEBUG:root:i=229 residual=0.0003172381257172674
-    DEBUG:root:i=230 residual=0.00031723943538963795
-    DEBUG:root:i=231 residual=0.0003172381839249283
-    DEBUG:root:i=232 residual=0.0003172381257172674
-    DEBUG:root:i=233 residual=0.0003172381257172674
-    DEBUG:root:i=234 residual=0.00031723800930194557
-    DEBUG:root:i=235 residual=0.00031723815482109785
-    DEBUG:root:i=236 residual=0.0003172395227011293
-    DEBUG:root:i=237 residual=0.0003139355103485286
-    DEBUG:root:i=238 residual=0.000320539518725127
-    DEBUG:root:i=239 residual=0.00031723943538963795
-    DEBUG:root:i=240 residual=0.00031723672873340547
-    DEBUG:root:i=241 residual=0.0003172380675096065
-    DEBUG:root:i=242 residual=0.0003172381257172674
-    DEBUG:root:i=243 residual=0.0003172395227011293
-    DEBUG:root:i=244 residual=0.0003172382421325892
-    DEBUG:root:i=245 residual=0.0003172380675096065
-    DEBUG:root:i=246 residual=0.0003172381257172674
-    DEBUG:root:i=247 residual=0.0003172381257172674
-    DEBUG:root:i=248 residual=0.0003172381257172674
-    DEBUG:root:i=249 residual=0.0003172395227011293
-    DEBUG:root:i=250 residual=0.0003172381257172674
-    DEBUG:root:i=251 residual=0.0003172381257172674
-    DEBUG:root:i=252 residual=0.0003172380675096065
-    DEBUG:root:i=253 residual=0.0003172381257172674
-    DEBUG:root:i=254 residual=0.00031723809661343694
-    DEBUG:root:i=255 residual=0.0003172381257172674
-    DEBUG:root:i=256 residual=0.00031723943538963795
-    DEBUG:root:i=257 residual=0.0003172381839249283
-    DEBUG:root:i=258 residual=0.0003172381257172674
-    DEBUG:root:i=259 residual=0.0003172381257172674
-    DEBUG:root:i=260 residual=0.00031723672873340547
-    DEBUG:root:i=261 residual=0.00031393536482937634
-    DEBUG:root:i=262 residual=0.00031723675783723593
-    DEBUG:root:i=263 residual=0.00031723809661343694
-    DEBUG:root:i=264 residual=0.00031723958090879023
-    DEBUG:root:i=265 residual=0.0003172381839249283
-    DEBUG:root:i=266 residual=0.0003172381257172674
-    DEBUG:root:i=267 residual=0.0003172380675096065
-    DEBUG:root:i=268 residual=0.00031723809661343694
-    DEBUG:root:i=269 residual=0.0003172381257172674
-    DEBUG:root:i=270 residual=0.0003205421380698681
-    DEBUG:root:i=271 residual=0.0003172396100126207
-    DEBUG:root:i=272 residual=0.0003172381257172674
-    DEBUG:root:i=273 residual=0.000317238038405776
-    DEBUG:root:i=274 residual=0.0003172381257172674
-    DEBUG:root:i=275 residual=0.00031723958090879023
-    DEBUG:root:i=276 residual=0.0003172381839249283
-    DEBUG:root:i=277 residual=0.0003172381257172674
-    DEBUG:root:i=278 residual=0.0003172381257172674
-    DEBUG:root:i=279 residual=0.000317238038405776
-    DEBUG:root:i=280 residual=0.00031393402605317533
-    DEBUG:root:i=281 residual=0.00031723672873340547
-    DEBUG:root:i=282 residual=0.0003172381257172674
-    DEBUG:root:i=283 residual=0.0003172395227011293
-    DEBUG:root:i=284 residual=0.0003172380675096065
-    DEBUG:root:i=285 residual=0.0003172381839249283
-    DEBUG:root:i=286 residual=0.0003172380675096065
-    DEBUG:root:i=287 residual=0.0003172382421325892
-    DEBUG:root:i=288 residual=0.000317238038405776
-    DEBUG:root:i=289 residual=0.0003172381257172674
-    DEBUG:root:i=290 residual=0.00031723943538963795
-    DEBUG:root:i=291 residual=0.0003172381839249283
-    DEBUG:root:i=292 residual=0.0003172381257172674
-    DEBUG:root:i=293 residual=0.0003139354521408677
-    DEBUG:root:i=294 residual=0.00031723672873340547
-    DEBUG:root:i=295 residual=0.000317238038405776
-    DEBUG:root:i=296 residual=0.0003172381257172674
-    DEBUG:root:i=297 residual=0.00031723667052574456
-    DEBUG:root:i=298 residual=0.0003172395227011293
-    DEBUG:root:i=299 residual=0.0003139354521408677
-    DEBUG:root:i=300 residual=0.00031393408426083624
-    DEBUG:root:i=301 residual=0.0003205393149983138
-    DEBUG:root:i=302 residual=0.0003172395227011293
-    DEBUG:root:i=303 residual=0.0003172381839249283
-    DEBUG:root:i=304 residual=0.0003172381257172674
-    DEBUG:root:i=305 residual=0.0003172381257172674
-    DEBUG:root:i=306 residual=0.00031723943538963795
-    DEBUG:root:i=307 residual=0.0003205407992936671
-    DEBUG:root:i=308 residual=0.000320542196277529
-    DEBUG:root:i=309 residual=0.0003205436805728823
-    DEBUG:root:i=310 residual=0.0003205422544851899
-    DEBUG:root:i=311 residual=0.0003205423417966813
-    DEBUG:root:i=312 residual=0.0003172409487888217
-    DEBUG:root:i=313 residual=0.0003139354521408677
-    DEBUG:root:i=314 residual=0.0003172367869410664
-    DEBUG:root:i=315 residual=0.0003172380675096065
-    DEBUG:root:i=316 residual=0.0003205407992936671
-    DEBUG:root:i=317 residual=0.0003172395227011293
-    DEBUG:root:i=318 residual=0.0003172395227011293
-    DEBUG:root:i=319 residual=0.0003172381839249283
-    DEBUG:root:i=320 residual=0.0003172381257172674
-    DEBUG:root:i=321 residual=0.0003139355103485286
-    DEBUG:root:i=322 residual=0.00031723672873340547
-    DEBUG:root:i=323 residual=0.0003139339096378535
-    DEBUG:root:i=324 residual=0.0003172366414219141
-    DEBUG:root:i=325 residual=0.0003172381257172674
-    DEBUG:root:i=326 residual=0.000317238038405776
-    DEBUG:root:i=327 residual=0.00031723958090879023
-    DEBUG:root:i=328 residual=0.0003139354521408677
-    DEBUG:root:i=329 residual=0.00031723667052574456
-    DEBUG:root:i=330 residual=0.00031723809661343694
-    DEBUG:root:i=331 residual=0.0003172381257172674
-    DEBUG:root:i=332 residual=0.00032054082839749753
-    DEBUG:root:i=333 residual=0.0003205421380698681
-    DEBUG:root:i=334 residual=0.0003172409487888217
-    DEBUG:root:i=335 residual=0.0003172381839249283
-    DEBUG:root:i=336 residual=0.00031723815482109785
-    DEBUG:root:i=337 residual=0.0003172381257172674
-    DEBUG:root:i=338 residual=0.0003172382421325892
-    DEBUG:root:i=339 residual=0.0003172395227011293
-    DEBUG:root:i=340 residual=0.000317238038405776
-    DEBUG:root:i=341 residual=0.0003172381257172674
-    DEBUG:root:i=342 residual=0.000317236699629575
-    DEBUG:root:i=343 residual=0.0003172380675096065
-    DEBUG:root:i=344 residual=0.0003172381257172674
-    DEBUG:root:i=345 residual=0.00031723958090879023
-    DEBUG:root:i=346 residual=0.00031723809661343694
-    DEBUG:root:i=347 residual=0.0003172380675096065
-    DEBUG:root:i=348 residual=0.00031723821302875876
-    DEBUG:root:i=349 residual=0.000317238038405776
-    DEBUG:root:i=350 residual=0.0003172381257172674
-    DEBUG:root:i=351 residual=0.000317238038405776
-    DEBUG:root:i=352 residual=0.0003172395518049598
-    DEBUG:root:i=353 residual=0.00031723809661343694
-    DEBUG:root:i=354 residual=0.0003172381839249283
-    DEBUG:root:i=355 residual=0.0003172381257172674
-    DEBUG:root:i=356 residual=0.00031723809661343694
-    DEBUG:root:i=357 residual=0.0003139354521408677
-    DEBUG:root:i=358 residual=0.00031393402605317533
-    DEBUG:root:i=359 residual=0.00031723672873340547
-    DEBUG:root:i=360 residual=0.00031723672873340547
-    DEBUG:root:i=361 residual=0.0003172395227011293
-    DEBUG:root:i=362 residual=0.000317238038405776
-    DEBUG:root:i=363 residual=0.0003172381257172674
-    DEBUG:root:i=364 residual=0.0003205407992936671
-    DEBUG:root:i=365 residual=0.00031723958090879023
-    DEBUG:root:i=366 residual=0.0003172395227011293
-    DEBUG:root:i=367 residual=0.0003172381257172674
-    DEBUG:root:i=368 residual=0.0003172381257172674
-    DEBUG:root:i=369 residual=0.00031723809661343694
-    DEBUG:root:i=370 residual=0.0003172381257172674
-    DEBUG:root:i=371 residual=0.0003172380675096065
-    DEBUG:root:i=372 residual=0.00031723815482109785
-    DEBUG:root:i=373 residual=0.0003172394062858075
-    DEBUG:root:i=374 residual=0.0003172381839249283
-    DEBUG:root:i=375 residual=0.0003139354521408677
-    DEBUG:root:i=376 residual=0.00031723667052574456
-    DEBUG:root:i=377 residual=0.0003172381257172674
-    DEBUG:root:i=378 residual=0.0003172381839249283
-    DEBUG:root:i=379 residual=0.000317236699629575
-    DEBUG:root:i=380 residual=0.000317238038405776
-    DEBUG:root:i=381 residual=0.0003172395227011293
-    DEBUG:root:i=382 residual=0.0003172381257172674
-    DEBUG:root:i=383 residual=0.0003172381257172674
-    DEBUG:root:i=384 residual=0.0003172381257172674
-    DEBUG:root:i=385 residual=0.00031723815482109785
-    DEBUG:root:i=386 residual=0.00031723815482109785
-    DEBUG:root:i=387 residual=0.0003172395227011293
-    DEBUG:root:i=388 residual=0.0003139355103485286
-    DEBUG:root:i=389 residual=0.00031723667052574456
-    DEBUG:root:i=390 residual=0.000317238038405776
-    DEBUG:root:i=391 residual=0.000317238038405776
-    DEBUG:root:i=392 residual=0.0003172381257172674
-    DEBUG:root:i=393 residual=0.0003139354521408677
-    DEBUG:root:i=394 residual=0.0003139341133646667
-    DEBUG:root:i=395 residual=0.0003139339969493449
-    DEBUG:root:i=396 residual=0.00031062986818142235
-    DEBUG:root:i=397 residual=0.0003139325126539916
-    DEBUG:root:i=398 residual=0.00031393402605317533
-    DEBUG:root:i=399 residual=0.00031063129426911473
-    DEBUG:root:i=400 residual=0.0003139312320854515
-    DEBUG:root:i=401 residual=0.00031723655411042273
-    DEBUG:root:i=402 residual=0.0003172380675096065
-    DEBUG:root:i=403 residual=0.00031393402605317533
-    DEBUG:root:i=404 residual=0.00031723667052574456
-    DEBUG:root:i=405 residual=0.0003172394644934684
-    DEBUG:root:i=406 residual=0.00031723809661343694
-    DEBUG:root:i=407 residual=0.0003172381257172674
-    DEBUG:root:i=408 residual=0.00031723821302875876
-    DEBUG:root:i=409 residual=0.0003172381839249283
-    DEBUG:root:i=410 residual=0.0003172381839249283
-    DEBUG:root:i=411 residual=0.0003172381257172674
-    DEBUG:root:i=412 residual=0.00031723943538963795
-    DEBUG:root:i=413 residual=0.0003172381257172674
-    DEBUG:root:i=414 residual=0.0003139354521408677
-    DEBUG:root:i=415 residual=0.00031723672873340547
-    DEBUG:root:i=416 residual=0.000317238038405776
-    DEBUG:root:i=417 residual=0.0003172381257172674
-    DEBUG:root:i=418 residual=0.0003172380675096065
-    DEBUG:root:i=419 residual=0.0003172381839249283
-    DEBUG:root:i=420 residual=0.00031723943538963795
-    DEBUG:root:i=421 residual=0.00031723681604489684
-    DEBUG:root:i=422 residual=0.00031393536482937634
-    DEBUG:root:i=423 residual=0.0003139339678455144
-    DEBUG:root:i=424 residual=0.0003172366414219141
-    DEBUG:root:i=425 residual=0.0003139354521408677
-    DEBUG:root:i=426 residual=0.00031063135247677565
-    DEBUG:root:i=427 residual=0.00030732728191651404
-    DEBUG:root:i=428 residual=0.0003139296895824373
-    DEBUG:root:i=429 residual=0.00031393393874168396
-    DEBUG:root:i=430 residual=0.0003139325126539916
-    DEBUG:root:i=431 residual=0.00031393393874168396
-    DEBUG:root:i=432 residual=0.00031393402605317533
-    DEBUG:root:i=433 residual=0.00031393402605317533
-    DEBUG:root:i=434 residual=0.0003172366414219141
-    DEBUG:root:i=435 residual=0.000317238038405776
-    DEBUG:root:i=436 residual=0.0003172381257172674
-    DEBUG:root:i=437 residual=0.0003172381257172674
-    DEBUG:root:i=438 residual=0.0003172381839249283
-    DEBUG:root:i=439 residual=0.0003172381257172674
-    DEBUG:root:i=440 residual=0.00031723667052574456
-    DEBUG:root:i=441 residual=0.0003172395227011293
-    DEBUG:root:i=442 residual=0.0003172381257172674
-    DEBUG:root:i=443 residual=0.0003139354521408677
-    DEBUG:root:i=444 residual=0.0003073287080042064
-    DEBUG:root:i=445 residual=0.0003073244006372988
-    DEBUG:root:i=446 residual=0.00031062838388606906
-    DEBUG:root:i=447 residual=0.00031393117387779057
-    DEBUG:root:i=448 residual=0.0003139325126539916
-    DEBUG:root:i=449 residual=0.0003139339096378535
-    DEBUG:root:i=450 residual=0.0003139339678455144
-    DEBUG:root:i=451 residual=0.0003139339678455144
-    DEBUG:root:i=452 residual=0.0003073287080042064
-    DEBUG:root:i=453 residual=0.00030732579762116075
-    DEBUG:root:i=454 residual=0.0003139298059977591
-    DEBUG:root:i=455 residual=0.00031393239623866975
-    DEBUG:root:i=456 residual=0.00031393393874168396
-    DEBUG:root:i=457 residual=0.0003106313233729452
-    DEBUG:root:i=458 residual=0.00030732585582882166
-    DEBUG:root:i=459 residual=0.00030732579762116075
-    DEBUG:root:i=460 residual=0.00031392835080623627
-    DEBUG:root:i=461 residual=0.00031393382232636213
-    DEBUG:root:i=462 residual=0.0003139339096378535
-    DEBUG:root:i=463 residual=0.0003139339678455144
-    DEBUG:root:i=464 residual=0.0003172366414219141
-    DEBUG:root:i=465 residual=0.000317238038405776
-    DEBUG:root:i=466 residual=0.00031723809661343694
-    DEBUG:root:i=467 residual=0.00031723958090879023
-    DEBUG:root:i=468 residual=0.00031723821302875876
-    DEBUG:root:i=469 residual=0.0003172381257172674
-    DEBUG:root:i=470 residual=0.0003172367869410664
-    DEBUG:root:i=471 residual=0.0003172379801981151
-    DEBUG:root:i=472 residual=0.00031723809661343694
-    DEBUG:root:i=473 residual=0.0003172380675096065
-    DEBUG:root:i=474 residual=0.00031393690733239055
-    DEBUG:root:i=475 residual=0.00031723667052574456
-    DEBUG:root:i=476 residual=0.0003172381257172674
-    DEBUG:root:i=477 residual=0.0003172381257172674
-    DEBUG:root:i=478 residual=0.0003172381257172674
-    DEBUG:root:i=479 residual=0.0003172380675096065
-    DEBUG:root:i=480 residual=0.0003139355103485286
-    DEBUG:root:i=481 residual=0.00032053940230980515
-    DEBUG:root:i=482 residual=0.0003172408905811608
-    DEBUG:root:i=483 residual=0.0003172381839249283
-    DEBUG:root:i=484 residual=0.0003172381257172674
-    DEBUG:root:i=485 residual=0.0003172381839249283
-    DEBUG:root:i=486 residual=0.0003172381257172674
-    DEBUG:root:i=487 residual=0.0003172381839249283
-    DEBUG:root:i=488 residual=0.0003172394644934684
-    DEBUG:root:i=489 residual=0.00031723672873340547
-    DEBUG:root:i=490 residual=0.0003139354521408677
-    DEBUG:root:i=491 residual=0.00031723672873340547
-    DEBUG:root:i=492 residual=0.0003172380675096065
-    DEBUG:root:i=493 residual=0.000317238038405776
-    DEBUG:root:i=494 residual=0.00031723815482109785
-    DEBUG:root:i=495 residual=0.0003172380675096065
-    DEBUG:root:i=496 residual=0.0003172395227011293
-    DEBUG:root:i=497 residual=0.0003172381257172674
-    DEBUG:root:i=498 residual=0.0003172381257172674
-    DEBUG:root:i=499 residual=0.000317238038405776
-    DEBUG:root:i=500 residual=0.0003172381257172674
-    DEBUG:root:i=501 residual=0.00031723809661343694
-    DEBUG:root:i=502 residual=0.0003172381257172674
-    DEBUG:root:i=503 residual=0.00031723958090879023
-    DEBUG:root:i=504 residual=0.000317238038405776
-    DEBUG:root:i=505 residual=0.0003172381257172674
-    DEBUG:root:i=506 residual=0.0003172381257172674
-    DEBUG:root:i=507 residual=0.0003172367869410664
-    DEBUG:root:i=508 residual=0.0003172381257172674
-    DEBUG:root:i=509 residual=0.00031723958090879023
-    DEBUG:root:i=510 residual=0.0003172381257172674
-    DEBUG:root:i=511 residual=0.0003172380675096065
-    DEBUG:root:i=512 residual=0.0003172381257172674
-    DEBUG:root:i=513 residual=0.0003172381257172674
-    DEBUG:root:i=514 residual=0.0003172381257172674
-    DEBUG:root:i=515 residual=0.000317238038405776
-    DEBUG:root:i=516 residual=0.0003172395227011293
-    DEBUG:root:i=517 residual=0.00031723815482109785
-    DEBUG:root:i=518 residual=0.00031723815482109785
-    DEBUG:root:i=519 residual=0.0003172381257172674
-    DEBUG:root:i=520 residual=0.0003172381257172674
-    DEBUG:root:i=521 residual=0.0003106327203568071
-    DEBUG:root:i=522 residual=0.0003106299554929137
-    DEBUG:root:i=523 residual=0.0003106299554929137
-    DEBUG:root:i=524 residual=0.0003139297477900982
-    DEBUG:root:i=525 residual=0.0003139339096378535
-    DEBUG:root:i=526 residual=0.0003172365832142532
-    DEBUG:root:i=527 residual=0.000317238038405776
-    DEBUG:root:i=528 residual=0.0003172395518049598
-    DEBUG:root:i=529 residual=0.00031723809661343694
-    DEBUG:root:i=530 residual=0.0003172381839249283
-    DEBUG:root:i=531 residual=0.0003172381839249283
-    DEBUG:root:i=532 residual=0.0003172381257172674
-    DEBUG:root:i=533 residual=0.00031723815482109785
-    DEBUG:root:i=534 residual=0.0003172394644934684
-    DEBUG:root:i=535 residual=0.0003172381839249283
-    DEBUG:root:i=536 residual=0.00031723672873340547
-    DEBUG:root:i=537 residual=0.00031393536482937634
-    DEBUG:root:i=538 residual=0.0003139339678455144
-    DEBUG:root:i=539 residual=0.00031063135247677565
-    DEBUG:root:i=540 residual=0.0003073272237088531
-    DEBUG:root:i=541 residual=0.00031392986420542
-    DEBUG:root:i=542 residual=0.0003073285042773932
-    DEBUG:root:i=543 residual=0.0003139298059977591
-    DEBUG:root:i=544 residual=0.0003139324253425002
-    DEBUG:root:i=545 residual=0.0003106312651652843
-    DEBUG:root:i=546 residual=0.0003139326290693134
-    DEBUG:root:i=547 residual=0.0003139339096378535
-    DEBUG:root:i=548 residual=0.0003073286497965455
-    DEBUG:root:i=549 residual=0.0003073244006372988
-    DEBUG:root:i=550 residual=0.00031062704510986805
-    DEBUG:root:i=551 residual=0.00031393111567012966
-    DEBUG:root:i=552 residual=0.0003106312360614538
-    DEBUG:root:i=553 residual=0.0003073271655011922
-    DEBUG:root:i=554 residual=0.0003073244006372988
-    DEBUG:root:i=555 residual=0.0003139296895824373
-    DEBUG:root:i=556 residual=0.00031393393874168396
-    DEBUG:root:i=557 residual=0.0003172366414219141
-    DEBUG:root:i=558 residual=0.0003172379801981151
-    DEBUG:root:i=559 residual=0.00031723809661343694
-    DEBUG:root:i=560 residual=0.0003172381257172674
-    DEBUG:root:i=561 residual=0.0003172381839249283
-    DEBUG:root:i=562 residual=0.000313936936436221
-    DEBUG:root:i=563 residual=0.00031723533174954355
-    DEBUG:root:i=564 residual=0.0003139353357255459
-    DEBUG:root:i=565 residual=0.00031063135247677565
-    DEBUG:root:i=566 residual=0.00031723390566185117
-    DEBUG:root:i=567 residual=0.000317238038405776
-    DEBUG:root:i=568 residual=0.00031723949359729886
-    DEBUG:root:i=569 residual=0.00031723809661343694
-    DEBUG:root:i=570 residual=0.000310632778564468
-    DEBUG:root:i=571 residual=0.0003106299554929137
-    DEBUG:root:i=572 residual=0.0003106285585090518
-    DEBUG:root:i=573 residual=0.00031393111567012966
-    DEBUG:root:i=574 residual=0.00031393382232636213
-    DEBUG:root:i=575 residual=0.000317236699629575
-    DEBUG:root:i=576 residual=0.0003139353939332068
-    DEBUG:root:i=577 residual=0.00031063135247677565
-    DEBUG:root:i=578 residual=0.0003139325708616525
-    DEBUG:root:i=579 residual=0.0003106299554929137
-    DEBUG:root:i=580 residual=0.0003106284129898995
-    DEBUG:root:i=581 residual=0.0003073272237088531
-    DEBUG:root:i=582 residual=0.0003106270742136985
-    DEBUG:root:i=583 residual=0.0003139325126539916
-    DEBUG:root:i=584 residual=0.00031063129426911473
-    DEBUG:root:i=585 residual=0.0003172352153342217
-    DEBUG:root:i=586 residual=0.0003172366414219141
-    DEBUG:root:i=587 residual=0.00032054074108600616
-    DEBUG:root:i=588 residual=0.0003172395227011293
-    DEBUG:root:i=589 residual=0.0003172381257172674
-    DEBUG:root:i=590 residual=0.0003172395227011293
-    DEBUG:root:i=591 residual=0.0003172381257172674
-    DEBUG:root:i=592 residual=0.0003172381257172674
-    DEBUG:root:i=593 residual=0.0003172380675096065
-    DEBUG:root:i=594 residual=0.0003172381839249283
-    DEBUG:root:i=595 residual=0.00031723809661343694
-    DEBUG:root:i=596 residual=0.0003172394644934684
-    DEBUG:root:i=597 residual=0.0003172381257172674
-    DEBUG:root:i=598 residual=0.0003139354521408677
-    DEBUG:root:i=599 residual=0.0003205394314136356
-    DEBUG:root:i=600 residual=0.0003172395227011293
-    DEBUG:root:i=601 residual=0.0003172381257172674
-    DEBUG:root:i=602 residual=0.0003172380675096065
-    DEBUG:root:i=603 residual=0.0003172395227011293
-    DEBUG:root:i=604 residual=0.0003172382421325892
-    DEBUG:root:i=605 residual=0.0003172367869410664
-    DEBUG:root:i=606 residual=0.0003139354521408677
-    DEBUG:root:i=607 residual=0.0003139339096378535
-    DEBUG:root:i=608 residual=0.0003106313233729452
-    DEBUG:root:i=609 residual=0.00031393259996548295
-    DEBUG:root:i=610 residual=0.00030732862069271505
-    DEBUG:root:i=611 residual=0.0003139298059977591
-    DEBUG:root:i=612 residual=0.00031393382232636213
-    DEBUG:root:i=613 residual=0.00031062992638908327
-    DEBUG:root:i=614 residual=0.0003139325126539916
-    DEBUG:root:i=615 residual=0.0003073272528126836
-    DEBUG:root:i=616 residual=0.00031393111567012966
-    DEBUG:root:i=617 residual=0.00030732856248505414
-    DEBUG:root:i=618 residual=0.0003139298059977591
-    DEBUG:root:i=619 residual=0.0003172352153342217
-    DEBUG:root:i=620 residual=0.000317238038405776
-    DEBUG:root:i=621 residual=0.000320542196277529
-    DEBUG:root:i=622 residual=0.000320542196277529
-    DEBUG:root:i=623 residual=0.0003172394644934684
-    DEBUG:root:i=624 residual=0.0003172381839249283
-    DEBUG:root:i=625 residual=0.00031393684912472963
-    DEBUG:root:i=626 residual=0.0003172367869410664
-    DEBUG:root:i=627 residual=0.000317238038405776
-    DEBUG:root:i=628 residual=0.0003172380675096065
-    DEBUG:root:i=629 residual=0.0003172381257172674
-    DEBUG:root:i=630 residual=0.00031723815482109785
-    DEBUG:root:i=631 residual=0.0003172381257172674
-    DEBUG:root:i=632 residual=0.0003172381839249283
-    DEBUG:root:i=633 residual=0.0003172395227011293
-    DEBUG:root:i=634 residual=0.000317238038405776
-    DEBUG:root:i=635 residual=0.0003172381257172674
-    DEBUG:root:i=636 residual=0.000317236699629575
-    DEBUG:root:i=637 residual=0.00031723809661343694
-    DEBUG:root:i=638 residual=0.00031723809661343694
-    DEBUG:root:i=639 residual=0.0003172395227011293
-    DEBUG:root:i=640 residual=0.0003172381257172674
-    DEBUG:root:i=641 residual=0.0003139355103485286
-    DEBUG:root:i=642 residual=0.0003172367869410664
-    DEBUG:root:i=643 residual=0.000317238038405776
-    DEBUG:root:i=644 residual=0.00031723815482109785
-    DEBUG:root:i=645 residual=0.0003172379801981151
-    DEBUG:root:i=646 residual=0.00031393542303703725
-    DEBUG:root:i=647 residual=0.00031393402605317533
-    DEBUG:root:i=648 residual=0.00031393402605317533
-    DEBUG:root:i=649 residual=0.00031723667052574456
-    DEBUG:root:i=650 residual=0.00032054015900939703
-    DEBUG:root:i=651 residual=0.00031724144355393946
-    DEBUG:root:i=652 residual=0.0003172383294440806
-    DEBUG:root:i=653 residual=0.00031723821302875876
-    DEBUG:root:i=654 residual=0.0003139355394523591
-    DEBUG:root:i=655 residual=0.000317236699629575
-    DEBUG:root:i=656 residual=0.00031723815482109785
-    DEBUG:root:i=657 residual=0.00031723800930194557
-    DEBUG:root:i=658 residual=0.0003172395227011293
-    DEBUG:root:i=659 residual=0.0003172381257172674
-    DEBUG:root:i=660 residual=0.00031723815482109785
-    DEBUG:root:i=661 residual=0.00031723809661343694
-    DEBUG:root:i=662 residual=0.00031723815482109785
-    DEBUG:root:i=663 residual=0.000317238038405776
-    DEBUG:root:i=664 residual=0.00031723809661343694
-    DEBUG:root:i=665 residual=0.0003172395227011293
-    DEBUG:root:i=666 residual=0.0003172381839249283
-    DEBUG:root:i=667 residual=0.0003172381839249283
-    DEBUG:root:i=668 residual=0.0003172380675096065
-    DEBUG:root:i=669 residual=0.00031723815482109785
-    DEBUG:root:i=670 residual=0.000317236699629575
-    DEBUG:root:i=671 residual=0.0003172395227011293
-    DEBUG:root:i=672 residual=0.0003172381257172674
-    DEBUG:root:i=673 residual=0.0003139354521408677
-    DEBUG:root:i=674 residual=0.00031723667052574456
-    DEBUG:root:i=675 residual=0.0003172380675096065
-    DEBUG:root:i=676 residual=0.0003172381257172674
-    DEBUG:root:i=677 residual=0.00031723809661343694
-    DEBUG:root:i=678 residual=0.00031723821302875876
-    DEBUG:root:i=679 residual=0.00031723943538963795
-    DEBUG:root:i=680 residual=0.0003172381839249283
-    DEBUG:root:i=681 residual=0.00032054074108600616
-    DEBUG:root:i=682 residual=0.0003205422544851899
-    DEBUG:root:i=683 residual=0.00031724097789265215
-    DEBUG:root:i=684 residual=0.0003139355103485286
-    DEBUG:root:i=685 residual=0.00031723672873340547
-    DEBUG:root:i=686 residual=0.000317238038405776
-    DEBUG:root:i=687 residual=0.00031723821302875876
-    DEBUG:root:i=688 residual=0.0003172381257172674
-    DEBUG:root:i=689 residual=0.00031723815482109785
-    DEBUG:root:i=690 residual=0.00031723675783723593
-    DEBUG:root:i=691 residual=0.00031723943538963795
-    DEBUG:root:i=692 residual=0.0003172381257172674
-    DEBUG:root:i=693 residual=0.0003172381257172674
-    DEBUG:root:i=694 residual=0.0003172381839249283
-    DEBUG:root:i=695 residual=0.0003172380675096065
-    DEBUG:root:i=696 residual=0.0003172381257172674
-    DEBUG:root:i=697 residual=0.0003172394644934684
-    DEBUG:root:i=698 residual=0.0003172381839249283
-    DEBUG:root:i=699 residual=0.0003172380675096065
-    DEBUG:root:i=700 residual=0.00031723815482109785
-    DEBUG:root:i=701 residual=0.00031723809661343694
-    DEBUG:root:i=702 residual=0.0003172381257172674
-    DEBUG:root:i=703 residual=0.0003172381257172674
-    DEBUG:root:i=704 residual=0.0003139368200208992
-    DEBUG:root:i=705 residual=0.0003139341133646667
-    DEBUG:root:i=706 residual=0.00031062992638908327
-    DEBUG:root:i=707 residual=0.00031393117387779057
-    DEBUG:root:i=708 residual=0.0003106312360614538
-    DEBUG:root:i=709 residual=0.00031393254175782204
-    DEBUG:root:i=710 residual=0.00031393393874168396
-    DEBUG:root:i=711 residual=0.0003172366414219141
-    DEBUG:root:i=712 residual=0.00031723809661343694
-    DEBUG:root:i=713 residual=0.0003205407119821757
-    DEBUG:root:i=714 residual=0.00031723958090879023
-    DEBUG:root:i=715 residual=0.0003172381839249283
-    DEBUG:root:i=716 residual=0.0003172395518049598
-    DEBUG:root:i=717 residual=0.0003172381839249283
-    DEBUG:root:i=718 residual=0.000317238038405776
-    DEBUG:root:i=719 residual=0.00031723672873340547
-    DEBUG:root:i=720 residual=0.000317238038405776
-    DEBUG:root:i=721 residual=0.00031723815482109785
-    DEBUG:root:i=722 residual=0.0003172394644934684
-    DEBUG:root:i=723 residual=0.0003172381839249283
-    DEBUG:root:i=724 residual=0.00031723809661343694
-    DEBUG:root:i=725 residual=0.00031723815482109785
-    DEBUG:root:i=726 residual=0.0003172381257172674
-    DEBUG:root:i=727 residual=0.00031723809661343694
-    DEBUG:root:i=728 residual=0.0003139354521408677
-    DEBUG:root:i=729 residual=0.00031723661231808364
-    DEBUG:root:i=730 residual=0.00031723949359729886
-    DEBUG:root:i=731 residual=0.0003172381257172674
-    DEBUG:root:i=732 residual=0.00031723815482109785
-    DEBUG:root:i=733 residual=0.0003172381257172674
-    DEBUG:root:i=734 residual=0.00031723821302875876
-    DEBUG:root:i=735 residual=0.000317238038405776
-    DEBUG:root:i=736 residual=0.00031723809661343694
-    DEBUG:root:i=737 residual=0.0003172395227011293
-    DEBUG:root:i=738 residual=0.00031723675783723593
-    DEBUG:root:i=739 residual=0.0003172381257172674
-    DEBUG:root:i=740 residual=0.0003139353357255459
-    DEBUG:root:i=741 residual=0.0003106313815806061
-    DEBUG:root:i=742 residual=0.0003139325708616525
-    DEBUG:root:i=743 residual=0.0003106313233729452
-    DEBUG:root:i=744 residual=0.00031062844209372997
-    DEBUG:root:i=745 residual=0.00031062992638908327
-    DEBUG:root:i=746 residual=0.00031393111567012966
-    DEBUG:root:i=747 residual=0.00031393388053402305
-    DEBUG:root:i=748 residual=0.000317236699629575
-    DEBUG:root:i=749 residual=0.000317238038405776
-    DEBUG:root:i=750 residual=0.00031723815482109785
-    DEBUG:root:i=751 residual=0.000317238038405776
-    DEBUG:root:i=752 residual=0.00032054082839749753
-    DEBUG:root:i=753 residual=0.00031724091968499124
-    DEBUG:root:i=754 residual=0.00031723821302875876
-    DEBUG:root:i=755 residual=0.00031723815482109785
-    DEBUG:root:i=756 residual=0.00031723809661343694
-    DEBUG:root:i=757 residual=0.0003172381257172674
-    DEBUG:root:i=758 residual=0.0003172381257172674
-    DEBUG:root:i=759 residual=0.0003172381257172674
-    DEBUG:root:i=760 residual=0.0003172394644934684
-    DEBUG:root:i=761 residual=0.0003139355103485286
-    DEBUG:root:i=762 residual=0.00031723667052574456
-    DEBUG:root:i=763 residual=0.00031723675783723593
-    DEBUG:root:i=764 residual=0.0003172380675096065
-    DEBUG:root:i=765 residual=0.00031723809661343694
-    DEBUG:root:i=766 residual=0.00031723815482109785
-    DEBUG:root:i=767 residual=0.0003172381257172674
-    DEBUG:root:i=768 residual=0.00031723943538963795
-    DEBUG:root:i=769 residual=0.0003172381257172674
-    DEBUG:root:i=770 residual=0.00031723815482109785
-    DEBUG:root:i=771 residual=0.00031723815482109785
-    DEBUG:root:i=772 residual=0.0003172381257172674
-    DEBUG:root:i=773 residual=0.000317238038405776
-    DEBUG:root:i=774 residual=0.0003172395227011293
-    DEBUG:root:i=775 residual=0.0003139354521408677
-    DEBUG:root:i=776 residual=0.0003139340551570058
-    DEBUG:root:i=777 residual=0.00031723675783723593
-    DEBUG:root:i=778 residual=0.00031723667052574456
-    DEBUG:root:i=779 residual=0.000317238038405776
-    DEBUG:root:i=780 residual=0.0003172380675096065
-    DEBUG:root:i=781 residual=0.0003172381257172674
-    DEBUG:root:i=782 residual=0.0003205407992936671
-    DEBUG:root:i=783 residual=0.0003205436805728823
-    DEBUG:root:i=784 residual=0.000320542196277529
-    DEBUG:root:i=785 residual=0.000320542196277529
-    DEBUG:root:i=786 residual=0.0003205436223652214
-    DEBUG:root:i=787 residual=0.00031723963911645114
-    DEBUG:root:i=788 residual=0.0003172381839249283
-    DEBUG:root:i=789 residual=0.0003172395227011293
-    DEBUG:root:i=790 residual=0.0003139354521408677
-    DEBUG:root:i=791 residual=0.0003139341133646667
-    DEBUG:root:i=792 residual=0.00031723667052574456
-    DEBUG:root:i=793 residual=0.0003172381257172674
-    DEBUG:root:i=794 residual=0.00031723809661343694
-    DEBUG:root:i=795 residual=0.00031723815482109785
-    DEBUG:root:i=796 residual=0.000317238038405776
-    DEBUG:root:i=797 residual=0.0003172381257172674
-    DEBUG:root:i=798 residual=0.0003172381257172674
-    DEBUG:root:i=799 residual=0.0003172395518049598
-    DEBUG:root:i=800 residual=0.00031723821302875876
-    DEBUG:root:i=801 residual=0.000317238038405776
-    DEBUG:root:i=802 residual=0.00031723672873340547
-    DEBUG:root:i=803 residual=0.000317238038405776
-    DEBUG:root:i=804 residual=0.00031723815482109785
-    DEBUG:root:i=805 residual=0.00031723943538963795
-    DEBUG:root:i=806 residual=0.0003139355394523591
-    DEBUG:root:i=807 residual=0.0003172366414219141
-    DEBUG:root:i=808 residual=0.00032054082839749753
-    DEBUG:root:i=809 residual=0.00031723949359729886
-    DEBUG:root:i=810 residual=0.0003172381839249283
-    DEBUG:root:i=811 residual=0.00031723815482109785
-    DEBUG:root:i=812 residual=0.0003172394062858075
-    DEBUG:root:i=813 residual=0.0003172381839249283
-    DEBUG:root:i=814 residual=0.0003172380675096065
-    DEBUG:root:i=815 residual=0.0003172381257172674
-    DEBUG:root:i=816 residual=0.00031723809661343694
-    DEBUG:root:i=817 residual=0.0003172381257172674
-    DEBUG:root:i=818 residual=0.0003172395227011293
-    DEBUG:root:i=819 residual=0.00031723821302875876
-    DEBUG:root:i=820 residual=0.00031723815482109785
-    DEBUG:root:i=821 residual=0.0003172380675096065
-    DEBUG:root:i=822 residual=0.00031723672873340547
-    DEBUG:root:i=823 residual=0.000317238038405776
-    DEBUG:root:i=824 residual=0.00031723809661343694
-    DEBUG:root:i=825 residual=0.0003139368200208992
-    DEBUG:root:i=826 residual=0.00031723681604489684
-    DEBUG:root:i=827 residual=0.0003172381257172674
-    DEBUG:root:i=828 residual=0.0003172381257172674
-    DEBUG:root:i=829 residual=0.00031723809661343694
-    DEBUG:root:i=830 residual=0.00031723809661343694
-    DEBUG:root:i=831 residual=0.00031723815482109785
-    DEBUG:root:i=832 residual=0.0003172380675096065
-    DEBUG:root:i=833 residual=0.0003172395518049598
-    DEBUG:root:i=834 residual=0.00031723815482109785
-    DEBUG:root:i=835 residual=0.000317238038405776
-    DEBUG:root:i=836 residual=0.00031723809661343694
-    DEBUG:root:i=837 residual=0.0003172381839249283
-    DEBUG:root:i=838 residual=0.0003139354521408677
-    DEBUG:root:i=839 residual=0.00031063135247677565
-    DEBUG:root:i=840 residual=0.00031723390566185117
-    DEBUG:root:i=841 residual=0.00031723795109428465
-    DEBUG:root:i=842 residual=0.00031723809661343694
-    DEBUG:root:i=843 residual=0.0003172381839249283
-    DEBUG:root:i=844 residual=0.0003172395518049598
-    DEBUG:root:i=845 residual=0.0003172381257172674
-    DEBUG:root:i=846 residual=0.0003172380675096065
-    DEBUG:root:i=847 residual=0.00031723809661343694
-    DEBUG:root:i=848 residual=0.0003172381257172674
-    DEBUG:root:i=849 residual=0.00031723809661343694
-    DEBUG:root:i=850 residual=0.0003172395518049598
-    DEBUG:root:i=851 residual=0.00031723809661343694
-    DEBUG:root:i=852 residual=0.0003172381257172674
-    DEBUG:root:i=853 residual=0.00031723815482109785
-    DEBUG:root:i=854 residual=0.00031723809661343694
-    DEBUG:root:i=855 residual=0.0003172381839249283
-    DEBUG:root:i=856 residual=0.00031723667052574456
-    DEBUG:root:i=857 residual=0.00031723943538963795
-    DEBUG:root:i=858 residual=0.00031723809661343694
-    DEBUG:root:i=859 residual=0.0003172381257172674
-    DEBUG:root:i=860 residual=0.00031723809661343694
-    DEBUG:root:i=861 residual=0.00031723815482109785
-    DEBUG:root:i=862 residual=0.0003172381257172674
-    DEBUG:root:i=863 residual=0.0003172395227011293
-    DEBUG:root:i=864 residual=0.00031393548124469817
-    DEBUG:root:i=865 residual=0.0003139339969493449
-    DEBUG:root:i=866 residual=0.00031063135247677565
-    DEBUG:root:i=867 residual=0.00031723390566185117
-    DEBUG:root:i=868 residual=0.00031723800930194557
-    DEBUG:root:i=869 residual=0.0003139368200208992
-    DEBUG:root:i=870 residual=0.0003073273110203445
-    DEBUG:root:i=871 residual=0.0003172325377818197
-    DEBUG:root:i=872 residual=0.000317238038405776
-    DEBUG:root:i=873 residual=0.00031723800930194557
-    DEBUG:root:i=874 residual=0.00031723809661343694
-    DEBUG:root:i=875 residual=0.00031723949359729886
-    DEBUG:root:i=876 residual=0.00031723815482109785
-    DEBUG:root:i=877 residual=0.00031723809661343694
-    DEBUG:root:i=878 residual=0.00031723815482109785
-    DEBUG:root:i=879 residual=0.000317238038405776
-    DEBUG:root:i=880 residual=0.00031393548124469817
-    DEBUG:root:i=881 residual=0.00031723672873340547
-    DEBUG:root:i=882 residual=0.0003172381257172674
-    DEBUG:root:i=883 residual=0.0003172395227011293
-    DEBUG:root:i=884 residual=0.00031723667052574456
-    DEBUG:root:i=885 residual=0.0003172380675096065
-    DEBUG:root:i=886 residual=0.0003172381257172674
-    DEBUG:root:i=887 residual=0.0003172381257172674
-    DEBUG:root:i=888 residual=0.0003172381257172674
-    DEBUG:root:i=889 residual=0.0003172381839249283
-    DEBUG:root:i=890 residual=0.00031723943538963795
-    DEBUG:root:i=891 residual=0.00031723675783723593
-    DEBUG:root:i=892 residual=0.0003172380675096065
-    DEBUG:root:i=893 residual=0.00031393548124469817
-    DEBUG:root:i=894 residual=0.00031063135247677565
-    DEBUG:root:i=895 residual=0.0003139325126539916
-    DEBUG:root:i=896 residual=0.0003106312651652843
-    DEBUG:root:i=897 residual=0.0003106271324213594
-    DEBUG:root:i=898 residual=0.0003073271072935313
-    DEBUG:root:i=899 residual=0.0003139298059977591
-    DEBUG:root:i=900 residual=0.00031723661231808364
-    DEBUG:root:i=901 residual=0.0003172394062858075
-    DEBUG:root:i=902 residual=0.00031723815482109785
-    DEBUG:root:i=903 residual=0.0003205407701898366
-    DEBUG:root:i=904 residual=0.00031723958090879023
-    DEBUG:root:i=905 residual=0.0003172381257172674
-    DEBUG:root:i=906 residual=0.00031723809661343694
-    DEBUG:root:i=907 residual=0.00031723815482109785
-    DEBUG:root:i=908 residual=0.000317238038405776
-    DEBUG:root:i=909 residual=0.00031393548124469817
-    DEBUG:root:i=910 residual=0.00031723667052574456
-    DEBUG:root:i=911 residual=0.0003172381257172674
-    DEBUG:root:i=912 residual=0.000317238038405776
-    DEBUG:root:i=913 residual=0.00031393548124469817
-    DEBUG:root:i=914 residual=0.00031063129426911473
-    DEBUG:root:i=915 residual=0.00031393265817314386
-    DEBUG:root:i=916 residual=0.0003205393732059747
-    DEBUG:root:i=917 residual=0.00031723943538963795
-    DEBUG:root:i=918 residual=0.0003172381257172674
-    DEBUG:root:i=919 residual=0.0003172395518049598
-    DEBUG:root:i=920 residual=0.0003172381839249283
-    DEBUG:root:i=921 residual=0.00031723809661343694
-    DEBUG:root:i=922 residual=0.00031723675783723593
-    DEBUG:root:i=923 residual=0.000317238038405776
-    DEBUG:root:i=924 residual=0.00031723809661343694
-    DEBUG:root:i=925 residual=0.0003139368200208992
-    DEBUG:root:i=926 residual=0.0003139327163808048
-    DEBUG:root:i=927 residual=0.0003106312651652843
-    DEBUG:root:i=928 residual=0.0003106298972852528
-    DEBUG:root:i=929 residual=0.0003106298390775919
-    DEBUG:root:i=930 residual=0.0003139312320854515
-    DEBUG:root:i=931 residual=0.0003172352153342217
-    DEBUG:root:i=932 residual=0.00031723943538963795
-    DEBUG:root:i=933 residual=0.0003205407992936671
-    DEBUG:root:i=934 residual=0.00031723949359729886
-    DEBUG:root:i=935 residual=0.00032054088660515845
-    DEBUG:root:i=936 residual=0.00032054365146905184
-    DEBUG:root:i=937 residual=0.00032054228358902037
-    DEBUG:root:i=938 residual=0.0003172396100126207
-    DEBUG:root:i=939 residual=0.0003172394644934684
-    DEBUG:root:i=940 residual=0.00031393548124469817
-    DEBUG:root:i=941 residual=0.00031723675783723593
-    DEBUG:root:i=942 residual=0.0003172380675096065
-    DEBUG:root:i=943 residual=0.00031723815482109785
-    DEBUG:root:i=944 residual=0.0003172380675096065
-    DEBUG:root:i=945 residual=0.0003172381257172674
-    DEBUG:root:i=946 residual=0.000317238038405776
-    DEBUG:root:i=947 residual=0.0003172395518049598
-    DEBUG:root:i=948 residual=0.00031723809661343694
-    DEBUG:root:i=949 residual=0.0003172381839249283
-    DEBUG:root:i=950 residual=0.000317238038405776
-    DEBUG:root:i=951 residual=0.0003172381257172674
-    DEBUG:root:i=952 residual=0.0003172381257172674
-    DEBUG:root:i=953 residual=0.00031723672873340547
-    DEBUG:root:i=954 residual=0.0003172395227011293
-    DEBUG:root:i=955 residual=0.0003172381257172674
-    DEBUG:root:i=956 residual=0.0003139353939332068
-    DEBUG:root:i=957 residual=0.000317236699629575
-    DEBUG:root:i=958 residual=0.0003172381257172674
-    DEBUG:root:i=959 residual=0.0003139353939332068
-    DEBUG:root:i=960 residual=0.00031723675783723593
-    DEBUG:root:i=961 residual=0.0003172379801981151
-    DEBUG:root:i=962 residual=0.00031723815482109785
-    DEBUG:root:i=963 residual=0.00031723949359729886
-    DEBUG:root:i=964 residual=0.00031723815482109785
-    DEBUG:root:i=965 residual=0.00031723815482109785
-    DEBUG:root:i=966 residual=0.00032054088660515845
-    DEBUG:root:i=967 residual=0.00032054216717369854
-    DEBUG:root:i=968 residual=0.00031724091968499124
-    DEBUG:root:i=969 residual=0.0003172382421325892
-    DEBUG:root:i=970 residual=0.0003172381257172674
-    DEBUG:root:i=971 residual=0.00031723809661343694
-    DEBUG:root:i=972 residual=0.000317238038405776
-    DEBUG:root:i=973 residual=0.0003172381257172674
-    DEBUG:root:i=974 residual=0.0003172381257172674
-    DEBUG:root:i=975 residual=0.00031723809661343694
-    DEBUG:root:i=976 residual=0.00031723815482109785
-    DEBUG:root:i=977 residual=0.00031723815482109785
-    DEBUG:root:i=978 residual=0.00031723809661343694
-    DEBUG:root:i=979 residual=0.0003172380675096065
-    DEBUG:root:i=980 residual=0.0003172395518049598
-    DEBUG:root:i=981 residual=0.0003172381257172674
-    DEBUG:root:i=982 residual=0.0003172381257172674
-    DEBUG:root:i=983 residual=0.00031723809661343694
-    DEBUG:root:i=984 residual=0.00031723809661343694
-    DEBUG:root:i=985 residual=0.0003172381839249283
-    DEBUG:root:i=986 residual=0.0003172394644934684
-    DEBUG:root:i=987 residual=0.0003172381839249283
-    DEBUG:root:i=988 residual=0.00031393542303703725
-    DEBUG:root:i=989 residual=0.00031723672873340547
-    DEBUG:root:i=990 residual=0.0003172380675096065
-    DEBUG:root:i=991 residual=0.00031723809661343694
-    DEBUG:root:i=992 residual=0.00031723675783723593
-    DEBUG:root:i=993 residual=0.00031723809661343694
-    DEBUG:root:i=994 residual=0.0003172395518049598
-    DEBUG:root:i=995 residual=0.0003172383294440806
-    DEBUG:root:i=996 residual=0.00031723821302875876
-    DEBUG:root:i=997 residual=0.0003172381257172674
-    DEBUG:root:i=998 residual=0.0003172381257172674
-    DEBUG:root:i=999 residual=0.0003205407992936671
-    INFO:root:rank=0 pagerank=1.0623e+01 url=www.lawfareblog.com/snowden-revelations
-    INFO:root:rank=1 pagerank=1.0623e+01 url=www.lawfareblog.com/lawfare-job-board
-    INFO:root:rank=2 pagerank=1.0623e+01 url=www.lawfareblog.com/masthead
-    INFO:root:rank=3 pagerank=1.0623e+01 url=www.lawfareblog.com/litigation-documents-resources-related-travel-ban
-    INFO:root:rank=4 pagerank=1.0623e+01 url=www.lawfareblog.com/subscribe-lawfare
-    INFO:root:rank=5 pagerank=1.0623e+01 url=www.lawfareblog.com/litigation-documents-related-appointment-matthew-whitaker-acting-attorney-general
-    INFO:root:rank=6 pagerank=1.0623e+01 url=www.lawfareblog.com/documents-related-mueller-investigation
-    INFO:root:rank=7 pagerank=1.0623e+01 url=www.lawfareblog.com/our-comments-policy
-    INFO:root:rank=8 pagerank=1.0623e+01 url=www.lawfareblog.com/upcoming-events
-    INFO:root:rank=9 pagerank=1.0623e+01 url=www.lawfareblog.com/topics
+   DEBUG:root:computing values
+   DEBUG:root:i=0 residual=24.13996124267578
+   DEBUG:root:i=1 residual=8.458998680114746
+   DEBUG:root:i=2 residual=3.1286847591400146
+   DEBUG:root:i=3 residual=1.124982476234436
+   DEBUG:root:i=4 residual=0.3952835202217102
+   DEBUG:root:i=5 residual=0.13689270615577698
+   DEBUG:root:i=6 residual=0.04697100818157196
+   DEBUG:root:i=7 residual=0.015966199338436127
+   DEBUG:root:i=8 residual=0.005269138608127832
+   DEBUG:root:i=9 residual=0.001595006207935512
+   DEBUG:root:i=10 residual=0.0003629165585152805
+   DEBUG:root:i=11 residual=0.00015495774277951568
+   DEBUG:root:i=12 residual=0.0002625398337841034
+   DEBUG:root:i=13 residual=0.0002975492679979652
+   DEBUG:root:i=14 residual=0.0003040328447241336
+   DEBUG:root:i=15 residual=0.00030732262530364096
+   DEBUG:root:i=16 residual=0.0003172335564158857
+   DEBUG:root:i=17 residual=0.00032054053735919297
+   DEBUG:root:i=18 residual=0.00032054216717369854
+   DEBUG:root:i=19 residual=0.0003172409487888217
+   DEBUG:root:i=20 residual=0.00031723821302875876
+   DEBUG:root:i=21 residual=0.0003172381839249283
+   DEBUG:root:i=22 residual=0.0003172379801981151
+   DEBUG:root:i=23 residual=0.00031723815482109785
+   DEBUG:root:i=24 residual=0.000317236699629575
+   DEBUG:root:i=25 residual=0.0003172394644934684
+   DEBUG:root:i=26 residual=0.0003172381257172674
+   DEBUG:root:i=27 residual=0.0003139354521408677
+   DEBUG:root:i=28 residual=0.0003139339969493449
+   DEBUG:root:i=29 residual=0.00031723675783723593
+   DEBUG:root:i=30 residual=0.0003172381257172674
+   DEBUG:root:i=31 residual=0.00031723809661343694
+   DEBUG:root:i=32 residual=0.0003172381257172674
+   DEBUG:root:i=33 residual=0.000317238038405776
+   DEBUG:root:i=34 residual=0.0003205407992936671
+   DEBUG:root:i=35 residual=0.00031724091968499124
+   DEBUG:root:i=36 residual=0.0003172382421325892
+   DEBUG:root:i=37 residual=0.0003172381257172674
+   DEBUG:root:i=38 residual=0.00031393548124469817
+   DEBUG:root:i=39 residual=0.00031723667052574456
+   DEBUG:root:i=40 residual=0.0003172380675096065
+   DEBUG:root:i=41 residual=0.0003172380675096065
+   DEBUG:root:i=42 residual=0.0003172381257172674
+   DEBUG:root:i=43 residual=0.00031723821302875876
+   DEBUG:root:i=44 residual=0.0003139353939332068
+   DEBUG:root:i=45 residual=0.00031723672873340547
+   DEBUG:root:i=46 residual=0.0003172380675096065
+   DEBUG:root:i=47 residual=0.0003172381257172674
+   DEBUG:root:i=48 residual=0.0003205407701898366
+   DEBUG:root:i=49 residual=0.00032054365146905184
+   DEBUG:root:i=50 residual=0.0003172395518049598
+   DEBUG:root:i=51 residual=0.0003172381839249283
+   DEBUG:root:i=52 residual=0.0003172381839249283
+   DEBUG:root:i=53 residual=0.0003172394644934684
+   DEBUG:root:i=54 residual=0.00031723821302875876
+   DEBUG:root:i=55 residual=0.0003172380675096065
+   DEBUG:root:i=56 residual=0.0003172380675096065
+   DEBUG:root:i=57 residual=0.000317238038405776
+   DEBUG:root:i=58 residual=0.0003172381839249283
+   DEBUG:root:i=59 residual=0.0003172395518049598
+   DEBUG:root:i=60 residual=0.0003172381257172674
+   DEBUG:root:i=61 residual=0.0003172380675096065
+   DEBUG:root:i=62 residual=0.0003172380675096065
+   DEBUG:root:i=63 residual=0.00031723675783723593
+   DEBUG:root:i=64 residual=0.000317238038405776
+   DEBUG:root:i=65 residual=0.00031393548124469817
+   DEBUG:root:i=66 residual=0.00031723667052574456
+   DEBUG:root:i=67 residual=0.0003172395227011293
+   DEBUG:root:i=68 residual=0.0003172381257172674
+   DEBUG:root:i=69 residual=0.0003172382421325892
+   DEBUG:root:i=70 residual=0.00031723815482109785
+   DEBUG:root:i=71 residual=0.000317238038405776
+   DEBUG:root:i=72 residual=0.00031393542303703725
+   DEBUG:root:i=73 residual=0.00031723667052574456
+   DEBUG:root:i=74 residual=0.00031723809661343694
+   DEBUG:root:i=75 residual=0.0003172395227011293
+   DEBUG:root:i=76 residual=0.0003172381839249283
+   DEBUG:root:i=77 residual=0.00031723815482109785
+   DEBUG:root:i=78 residual=0.000317238038405776
+   DEBUG:root:i=79 residual=0.0003172381257172674
+   DEBUG:root:i=80 residual=0.0003205394314136356
+   DEBUG:root:i=81 residual=0.00031724091968499124
+   DEBUG:root:i=82 residual=0.00031723815482109785
+   DEBUG:root:i=83 residual=0.0003172380675096065
+   DEBUG:root:i=84 residual=0.0003172380675096065
+   DEBUG:root:i=85 residual=0.00031723815482109785
+   DEBUG:root:i=86 residual=0.00031723815482109785
+   DEBUG:root:i=87 residual=0.0003172395227011293
+   DEBUG:root:i=88 residual=0.0003172381839249283
+   DEBUG:root:i=89 residual=0.00031723809661343694
+   DEBUG:root:i=90 residual=0.0003172381257172674
+   DEBUG:root:i=91 residual=0.000317236699629575
+   DEBUG:root:i=92 residual=0.0003172381839249283
+   DEBUG:root:i=93 residual=0.0003172395227011293
+   DEBUG:root:i=94 residual=0.0003172381257172674
+   DEBUG:root:i=95 residual=0.0003172380675096065
+   DEBUG:root:i=96 residual=0.00031393548124469817
+   DEBUG:root:i=97 residual=0.00031723672873340547
+   DEBUG:root:i=98 residual=0.00031723667052574456
+   DEBUG:root:i=99 residual=0.0003172381257172674
+   DEBUG:root:i=100 residual=0.0003172379801981151
+   DEBUG:root:i=101 residual=0.00031723949359729886
+   DEBUG:root:i=102 residual=0.0003172381839249283
+   DEBUG:root:i=103 residual=0.00031723815482109785
+   DEBUG:root:i=104 residual=0.0003205407992936671
+   DEBUG:root:i=105 residual=0.0003172395518049598
+   DEBUG:root:i=106 residual=0.00031723943538963795
+   DEBUG:root:i=107 residual=0.000320540857501328
+   DEBUG:root:i=108 residual=0.0003172395518049598
+   DEBUG:root:i=109 residual=0.0003172381839249283
+   DEBUG:root:i=110 residual=0.0003172381257172674
+   DEBUG:root:i=111 residual=0.00031723943538963795
+   DEBUG:root:i=112 residual=0.00032054088660515845
+   DEBUG:root:i=113 residual=0.00031723949359729886
+   DEBUG:root:i=114 residual=0.00031723815482109785
+   DEBUG:root:i=115 residual=0.0003172381257172674
+   DEBUG:root:i=116 residual=0.0003172396100126207
+   DEBUG:root:i=117 residual=0.0003172381257172674
+   DEBUG:root:i=118 residual=0.000317238038405776
+   DEBUG:root:i=119 residual=0.0003172381839249283
+   DEBUG:root:i=120 residual=0.00031723809661343694
+   DEBUG:root:i=121 residual=0.0003172381257172674
+   DEBUG:root:i=122 residual=0.000317236699629575
+   DEBUG:root:i=123 residual=0.0003172394644934684
+   DEBUG:root:i=124 residual=0.0003172381257172674
+   DEBUG:root:i=125 residual=0.0003172381257172674
+   DEBUG:root:i=126 residual=0.00031723821302875876
+   DEBUG:root:i=127 residual=0.00031723809661343694
+   DEBUG:root:i=128 residual=0.00031393542303703725
+   DEBUG:root:i=129 residual=0.000317236699629575
+   DEBUG:root:i=130 residual=0.0003139354521408677
+   DEBUG:root:i=131 residual=0.0003172366414219141
+   DEBUG:root:i=132 residual=0.0003172395227011293
+   DEBUG:root:i=133 residual=0.00031723809661343694
+   DEBUG:root:i=134 residual=0.0003172381257172674
+   DEBUG:root:i=135 residual=0.0003172381257172674
+   DEBUG:root:i=136 residual=0.00031723821302875876
+   DEBUG:root:i=137 residual=0.0003172381257172674
+   DEBUG:root:i=138 residual=0.00031723809661343694
+   DEBUG:root:i=139 residual=0.0003172394644934684
+   DEBUG:root:i=140 residual=0.000317236699629575
+   DEBUG:root:i=141 residual=0.00031723821302875876
+   DEBUG:root:i=142 residual=0.00031723809661343694
+   DEBUG:root:i=143 residual=0.000320540857501328
+   DEBUG:root:i=144 residual=0.0003172409487888217
+   DEBUG:root:i=145 residual=0.00031723815482109785
+   DEBUG:root:i=146 residual=0.0003172381839249283
+   DEBUG:root:i=147 residual=0.0003172381257172674
+   DEBUG:root:i=148 residual=0.0003172381257172674
+   DEBUG:root:i=149 residual=0.0003172381257172674
+   DEBUG:root:i=150 residual=0.0003172394644934684
+   DEBUG:root:i=151 residual=0.0003205407992936671
+   DEBUG:root:i=152 residual=0.000320542196277529
+   DEBUG:root:i=153 residual=0.00031723958090879023
+   DEBUG:root:i=154 residual=0.0003172395227011293
+   DEBUG:root:i=155 residual=0.00031723821302875876
+   DEBUG:root:i=156 residual=0.000317238038405776
+   DEBUG:root:i=157 residual=0.0003172381257172674
+   DEBUG:root:i=158 residual=0.0003139354521408677
+   DEBUG:root:i=159 residual=0.00031723672873340547
+   DEBUG:root:i=160 residual=0.0003172381257172674
+   DEBUG:root:i=161 residual=0.000317238038405776
+   DEBUG:root:i=162 residual=0.0003172395227011293
+   DEBUG:root:i=163 residual=0.00031723672873340547
+   DEBUG:root:i=164 residual=0.0003172381839249283
+   DEBUG:root:i=165 residual=0.0003139354521408677
+   DEBUG:root:i=166 residual=0.000320539518725127
+   DEBUG:root:i=167 residual=0.00031723943538963795
+   DEBUG:root:i=168 residual=0.0003172395227011293
+   DEBUG:root:i=169 residual=0.0003172381839249283
+   DEBUG:root:i=170 residual=0.0003172381257172674
+   DEBUG:root:i=171 residual=0.0003172381257172674
+   DEBUG:root:i=172 residual=0.000317238038405776
+   DEBUG:root:i=173 residual=0.0003172381257172674
+   DEBUG:root:i=174 residual=0.000317238038405776
+   DEBUG:root:i=175 residual=0.0003172395227011293
+   DEBUG:root:i=176 residual=0.0003205407992936671
+   DEBUG:root:i=177 residual=0.0003172395227011293
+   DEBUG:root:i=178 residual=0.0003139354521408677
+   DEBUG:root:i=179 residual=0.00031723672873340547
+   DEBUG:root:i=180 residual=0.00031723815482109785
+   DEBUG:root:i=181 residual=0.00031723949359729886
+   DEBUG:root:i=182 residual=0.00032054088660515845
+   DEBUG:root:i=183 residual=0.0003172395227011293
+   DEBUG:root:i=184 residual=0.000317236699629575
+   DEBUG:root:i=185 residual=0.0003172380675096065
+   DEBUG:root:i=186 residual=0.0003172395518049598
+   DEBUG:root:i=187 residual=0.0003172381839249283
+   DEBUG:root:i=188 residual=0.0003172381257172674
+   DEBUG:root:i=189 residual=0.0003139354521408677
+   DEBUG:root:i=190 residual=0.00031723672873340547
+   DEBUG:root:i=191 residual=0.0003172381257172674
+   DEBUG:root:i=192 residual=0.0003172380675096065
+   DEBUG:root:i=193 residual=0.00031723815482109785
+   DEBUG:root:i=194 residual=0.0003172395227011293
+   DEBUG:root:i=195 residual=0.00031393536482937634
+   DEBUG:root:i=196 residual=0.00031723672873340547
+   DEBUG:root:i=197 residual=0.000317238038405776
+   DEBUG:root:i=198 residual=0.00031723815482109785
+   DEBUG:root:i=199 residual=0.0003172381257172674
+   DEBUG:root:i=200 residual=0.0003172381257172674
+   DEBUG:root:i=201 residual=0.00031723661231808364
+   DEBUG:root:i=202 residual=0.0003172395227011293
+   DEBUG:root:i=203 residual=0.0003172381257172674
+   DEBUG:root:i=204 residual=0.0003172382421325892
+   DEBUG:root:i=205 residual=0.0003172381257172674
+   DEBUG:root:i=206 residual=0.00032054074108600616
+   DEBUG:root:i=207 residual=0.0003172409487888217
+   DEBUG:root:i=208 residual=0.0003172381257172674
+   DEBUG:root:i=209 residual=0.0003172381839249283
+   DEBUG:root:i=210 residual=0.0003172381257172674
+   DEBUG:root:i=211 residual=0.0003172381257172674
+   DEBUG:root:i=212 residual=0.000317238038405776
+   DEBUG:root:i=213 residual=0.0003172381257172674
+   DEBUG:root:i=214 residual=0.0003172395227011293
+   DEBUG:root:i=215 residual=0.00031723821302875876
+   DEBUG:root:i=216 residual=0.00031723815482109785
+   DEBUG:root:i=217 residual=0.00031723800930194557
+   DEBUG:root:i=218 residual=0.0003172381257172674
+   DEBUG:root:i=219 residual=0.0003172381839249283
+   DEBUG:root:i=220 residual=0.0003172395227011293
+   DEBUG:root:i=221 residual=0.00031723815482109785
+   DEBUG:root:i=222 residual=0.0003139354521408677
+   DEBUG:root:i=223 residual=0.00031723672873340547
+   DEBUG:root:i=224 residual=0.00031723661231808364
+   DEBUG:root:i=225 residual=0.00031393542303703725
+   DEBUG:root:i=226 residual=0.00031723672873340547
+   DEBUG:root:i=227 residual=0.0003172381257172674
+   DEBUG:root:i=228 residual=0.000317238038405776
+   DEBUG:root:i=229 residual=0.0003172381257172674
+   DEBUG:root:i=230 residual=0.00031723943538963795
+   DEBUG:root:i=231 residual=0.0003172381839249283
+   DEBUG:root:i=232 residual=0.0003172381257172674
+   DEBUG:root:i=233 residual=0.0003172381257172674
+   DEBUG:root:i=234 residual=0.00031723800930194557
+   DEBUG:root:i=235 residual=0.00031723815482109785
+   DEBUG:root:i=236 residual=0.0003172395227011293
+   DEBUG:root:i=237 residual=0.0003139355103485286
+   DEBUG:root:i=238 residual=0.000320539518725127
+   DEBUG:root:i=239 residual=0.00031723943538963795
+   DEBUG:root:i=240 residual=0.00031723672873340547
+   DEBUG:root:i=241 residual=0.0003172380675096065
+   DEBUG:root:i=242 residual=0.0003172381257172674
+   DEBUG:root:i=243 residual=0.0003172395227011293
+   DEBUG:root:i=244 residual=0.0003172382421325892
+   DEBUG:root:i=245 residual=0.0003172380675096065
+   DEBUG:root:i=246 residual=0.0003172381257172674
+   DEBUG:root:i=247 residual=0.0003172381257172674
+   DEBUG:root:i=248 residual=0.0003172381257172674
+   DEBUG:root:i=249 residual=0.0003172395227011293
+   DEBUG:root:i=250 residual=0.0003172381257172674
+   DEBUG:root:i=251 residual=0.0003172381257172674
+   DEBUG:root:i=252 residual=0.0003172380675096065
+   DEBUG:root:i=253 residual=0.0003172381257172674
+   DEBUG:root:i=254 residual=0.00031723809661343694
+   DEBUG:root:i=255 residual=0.0003172381257172674
+   DEBUG:root:i=256 residual=0.00031723943538963795
+   DEBUG:root:i=257 residual=0.0003172381839249283
+   DEBUG:root:i=258 residual=0.0003172381257172674
+   DEBUG:root:i=259 residual=0.0003172381257172674
+   DEBUG:root:i=260 residual=0.00031723672873340547
+   DEBUG:root:i=261 residual=0.00031393536482937634
+   DEBUG:root:i=262 residual=0.00031723675783723593
+   DEBUG:root:i=263 residual=0.00031723809661343694
+   DEBUG:root:i=264 residual=0.00031723958090879023
+   DEBUG:root:i=265 residual=0.0003172381839249283
+   DEBUG:root:i=266 residual=0.0003172381257172674
+   DEBUG:root:i=267 residual=0.0003172380675096065
+   DEBUG:root:i=268 residual=0.00031723809661343694
+   DEBUG:root:i=269 residual=0.0003172381257172674
+   DEBUG:root:i=270 residual=0.0003205421380698681
+   DEBUG:root:i=271 residual=0.0003172396100126207
+   DEBUG:root:i=272 residual=0.0003172381257172674
+   DEBUG:root:i=273 residual=0.000317238038405776
+   DEBUG:root:i=274 residual=0.0003172381257172674
+   DEBUG:root:i=275 residual=0.00031723958090879023
+   DEBUG:root:i=276 residual=0.0003172381839249283
+   DEBUG:root:i=277 residual=0.0003172381257172674
+   DEBUG:root:i=278 residual=0.0003172381257172674
+   DEBUG:root:i=279 residual=0.000317238038405776
+   DEBUG:root:i=280 residual=0.00031393402605317533
+   DEBUG:root:i=281 residual=0.00031723672873340547
+   DEBUG:root:i=282 residual=0.0003172381257172674
+   DEBUG:root:i=283 residual=0.0003172395227011293
+   DEBUG:root:i=284 residual=0.0003172380675096065
+   DEBUG:root:i=285 residual=0.0003172381839249283
+   DEBUG:root:i=286 residual=0.0003172380675096065
+   DEBUG:root:i=287 residual=0.0003172382421325892
+   DEBUG:root:i=288 residual=0.000317238038405776
+   DEBUG:root:i=289 residual=0.0003172381257172674
+   DEBUG:root:i=290 residual=0.00031723943538963795
+   DEBUG:root:i=291 residual=0.0003172381839249283
+   DEBUG:root:i=292 residual=0.0003172381257172674
+   DEBUG:root:i=293 residual=0.0003139354521408677
+   DEBUG:root:i=294 residual=0.00031723672873340547
+   DEBUG:root:i=295 residual=0.000317238038405776
+   DEBUG:root:i=296 residual=0.0003172381257172674
+   DEBUG:root:i=297 residual=0.00031723667052574456
+   DEBUG:root:i=298 residual=0.0003172395227011293
+   DEBUG:root:i=299 residual=0.0003139354521408677
+   DEBUG:root:i=300 residual=0.00031393408426083624
+   DEBUG:root:i=301 residual=0.0003205393149983138
+   DEBUG:root:i=302 residual=0.0003172395227011293
+   DEBUG:root:i=303 residual=0.0003172381839249283
+   DEBUG:root:i=304 residual=0.0003172381257172674
+   DEBUG:root:i=305 residual=0.0003172381257172674
+   DEBUG:root:i=306 residual=0.00031723943538963795
+   DEBUG:root:i=307 residual=0.0003205407992936671
+   DEBUG:root:i=308 residual=0.000320542196277529
+   DEBUG:root:i=309 residual=0.0003205436805728823
+   DEBUG:root:i=310 residual=0.0003205422544851899
+   DEBUG:root:i=311 residual=0.0003205423417966813
+   DEBUG:root:i=312 residual=0.0003172409487888217
+   DEBUG:root:i=313 residual=0.0003139354521408677
+   DEBUG:root:i=314 residual=0.0003172367869410664
+   DEBUG:root:i=315 residual=0.0003172380675096065
+   DEBUG:root:i=316 residual=0.0003205407992936671
+   DEBUG:root:i=317 residual=0.0003172395227011293
+   DEBUG:root:i=318 residual=0.0003172395227011293
+   DEBUG:root:i=319 residual=0.0003172381839249283
+   DEBUG:root:i=320 residual=0.0003172381257172674
+   DEBUG:root:i=321 residual=0.0003139355103485286
+   DEBUG:root:i=322 residual=0.00031723672873340547
+   DEBUG:root:i=323 residual=0.0003139339096378535
+   DEBUG:root:i=324 residual=0.0003172366414219141
+   DEBUG:root:i=325 residual=0.0003172381257172674
+   DEBUG:root:i=326 residual=0.000317238038405776
+   DEBUG:root:i=327 residual=0.00031723958090879023
+   DEBUG:root:i=328 residual=0.0003139354521408677
+   DEBUG:root:i=329 residual=0.00031723667052574456
+   DEBUG:root:i=330 residual=0.00031723809661343694
+   DEBUG:root:i=331 residual=0.0003172381257172674
+   DEBUG:root:i=332 residual=0.00032054082839749753
+   DEBUG:root:i=333 residual=0.0003205421380698681
+   DEBUG:root:i=334 residual=0.0003172409487888217
+   DEBUG:root:i=335 residual=0.0003172381839249283
+   DEBUG:root:i=336 residual=0.00031723815482109785
+   DEBUG:root:i=337 residual=0.0003172381257172674
+   DEBUG:root:i=338 residual=0.0003172382421325892
+   DEBUG:root:i=339 residual=0.0003172395227011293
+   DEBUG:root:i=340 residual=0.000317238038405776
+   DEBUG:root:i=341 residual=0.0003172381257172674
+   DEBUG:root:i=342 residual=0.000317236699629575
+   DEBUG:root:i=343 residual=0.0003172380675096065
+   DEBUG:root:i=344 residual=0.0003172381257172674
+   DEBUG:root:i=345 residual=0.00031723958090879023
+   DEBUG:root:i=346 residual=0.00031723809661343694
+   DEBUG:root:i=347 residual=0.0003172380675096065
+   DEBUG:root:i=348 residual=0.00031723821302875876
+   DEBUG:root:i=349 residual=0.000317238038405776
+   DEBUG:root:i=350 residual=0.0003172381257172674
+   DEBUG:root:i=351 residual=0.000317238038405776
+   DEBUG:root:i=352 residual=0.0003172395518049598
+   DEBUG:root:i=353 residual=0.00031723809661343694
+   DEBUG:root:i=354 residual=0.0003172381839249283
+   DEBUG:root:i=355 residual=0.0003172381257172674
+   DEBUG:root:i=356 residual=0.00031723809661343694
+   DEBUG:root:i=357 residual=0.0003139354521408677
+   DEBUG:root:i=358 residual=0.00031393402605317533
+   DEBUG:root:i=359 residual=0.00031723672873340547
+   DEBUG:root:i=360 residual=0.00031723672873340547
+   DEBUG:root:i=361 residual=0.0003172395227011293
+   DEBUG:root:i=362 residual=0.000317238038405776
+   DEBUG:root:i=363 residual=0.0003172381257172674
+   DEBUG:root:i=364 residual=0.0003205407992936671
+   DEBUG:root:i=365 residual=0.00031723958090879023
+   DEBUG:root:i=366 residual=0.0003172395227011293
+   DEBUG:root:i=367 residual=0.0003172381257172674
+   DEBUG:root:i=368 residual=0.0003172381257172674
+   DEBUG:root:i=369 residual=0.00031723809661343694
+   DEBUG:root:i=370 residual=0.0003172381257172674
+   DEBUG:root:i=371 residual=0.0003172380675096065
+   DEBUG:root:i=372 residual=0.00031723815482109785
+   DEBUG:root:i=373 residual=0.0003172394062858075
+   DEBUG:root:i=374 residual=0.0003172381839249283
+   DEBUG:root:i=375 residual=0.0003139354521408677
+   DEBUG:root:i=376 residual=0.00031723667052574456
+   DEBUG:root:i=377 residual=0.0003172381257172674
+   DEBUG:root:i=378 residual=0.0003172381839249283
+   DEBUG:root:i=379 residual=0.000317236699629575
+   DEBUG:root:i=380 residual=0.000317238038405776
+   DEBUG:root:i=381 residual=0.0003172395227011293
+   DEBUG:root:i=382 residual=0.0003172381257172674
+   DEBUG:root:i=383 residual=0.0003172381257172674
+   DEBUG:root:i=384 residual=0.0003172381257172674
+   DEBUG:root:i=385 residual=0.00031723815482109785
+   DEBUG:root:i=386 residual=0.00031723815482109785
+   DEBUG:root:i=387 residual=0.0003172395227011293
+   DEBUG:root:i=388 residual=0.0003139355103485286
+   DEBUG:root:i=389 residual=0.00031723667052574456
+   DEBUG:root:i=390 residual=0.000317238038405776
+   DEBUG:root:i=391 residual=0.000317238038405776
+   DEBUG:root:i=392 residual=0.0003172381257172674
+   DEBUG:root:i=393 residual=0.0003139354521408677
+   DEBUG:root:i=394 residual=0.0003139341133646667
+   DEBUG:root:i=395 residual=0.0003139339969493449
+   DEBUG:root:i=396 residual=0.00031062986818142235
+   DEBUG:root:i=397 residual=0.0003139325126539916
+   DEBUG:root:i=398 residual=0.00031393402605317533
+   DEBUG:root:i=399 residual=0.00031063129426911473
+   DEBUG:root:i=400 residual=0.0003139312320854515
+   DEBUG:root:i=401 residual=0.00031723655411042273
+   DEBUG:root:i=402 residual=0.0003172380675096065
+   DEBUG:root:i=403 residual=0.00031393402605317533
+   DEBUG:root:i=404 residual=0.00031723667052574456
+   DEBUG:root:i=405 residual=0.0003172394644934684
+   DEBUG:root:i=406 residual=0.00031723809661343694
+   DEBUG:root:i=407 residual=0.0003172381257172674
+   DEBUG:root:i=408 residual=0.00031723821302875876
+   DEBUG:root:i=409 residual=0.0003172381839249283
+   DEBUG:root:i=410 residual=0.0003172381839249283
+   DEBUG:root:i=411 residual=0.0003172381257172674
+   DEBUG:root:i=412 residual=0.00031723943538963795
+   DEBUG:root:i=413 residual=0.0003172381257172674
+   DEBUG:root:i=414 residual=0.0003139354521408677
+   DEBUG:root:i=415 residual=0.00031723672873340547
+   DEBUG:root:i=416 residual=0.000317238038405776
+   DEBUG:root:i=417 residual=0.0003172381257172674
+   DEBUG:root:i=418 residual=0.0003172380675096065
+   DEBUG:root:i=419 residual=0.0003172381839249283
+   DEBUG:root:i=420 residual=0.00031723943538963795
+   DEBUG:root:i=421 residual=0.00031723681604489684
+   DEBUG:root:i=422 residual=0.00031393536482937634
+   DEBUG:root:i=423 residual=0.0003139339678455144
+   DEBUG:root:i=424 residual=0.0003172366414219141
+   DEBUG:root:i=425 residual=0.0003139354521408677
+   DEBUG:root:i=426 residual=0.00031063135247677565
+   DEBUG:root:i=427 residual=0.00030732728191651404
+   DEBUG:root:i=428 residual=0.0003139296895824373
+   DEBUG:root:i=429 residual=0.00031393393874168396
+   DEBUG:root:i=430 residual=0.0003139325126539916
+   DEBUG:root:i=431 residual=0.00031393393874168396
+   DEBUG:root:i=432 residual=0.00031393402605317533
+   DEBUG:root:i=433 residual=0.00031393402605317533
+   DEBUG:root:i=434 residual=0.0003172366414219141
+   DEBUG:root:i=435 residual=0.000317238038405776
+   DEBUG:root:i=436 residual=0.0003172381257172674
+   DEBUG:root:i=437 residual=0.0003172381257172674
+   DEBUG:root:i=438 residual=0.0003172381839249283
+   DEBUG:root:i=439 residual=0.0003172381257172674
+   DEBUG:root:i=440 residual=0.00031723667052574456
+   DEBUG:root:i=441 residual=0.0003172395227011293
+   DEBUG:root:i=442 residual=0.0003172381257172674
+   DEBUG:root:i=443 residual=0.0003139354521408677
+   DEBUG:root:i=444 residual=0.0003073287080042064
+   DEBUG:root:i=445 residual=0.0003073244006372988
+   DEBUG:root:i=446 residual=0.00031062838388606906
+   DEBUG:root:i=447 residual=0.00031393117387779057
+   DEBUG:root:i=448 residual=0.0003139325126539916
+   DEBUG:root:i=449 residual=0.0003139339096378535
+   DEBUG:root:i=450 residual=0.0003139339678455144
+   DEBUG:root:i=451 residual=0.0003139339678455144
+   DEBUG:root:i=452 residual=0.0003073287080042064
+   DEBUG:root:i=453 residual=0.00030732579762116075
+   DEBUG:root:i=454 residual=0.0003139298059977591
+   DEBUG:root:i=455 residual=0.00031393239623866975
+   DEBUG:root:i=456 residual=0.00031393393874168396
+   DEBUG:root:i=457 residual=0.0003106313233729452
+   DEBUG:root:i=458 residual=0.00030732585582882166
+   DEBUG:root:i=459 residual=0.00030732579762116075
+   DEBUG:root:i=460 residual=0.00031392835080623627
+   DEBUG:root:i=461 residual=0.00031393382232636213
+   DEBUG:root:i=462 residual=0.0003139339096378535
+   DEBUG:root:i=463 residual=0.0003139339678455144
+   DEBUG:root:i=464 residual=0.0003172366414219141
+   DEBUG:root:i=465 residual=0.000317238038405776
+   DEBUG:root:i=466 residual=0.00031723809661343694
+   DEBUG:root:i=467 residual=0.00031723958090879023
+   DEBUG:root:i=468 residual=0.00031723821302875876
+   DEBUG:root:i=469 residual=0.0003172381257172674
+   DEBUG:root:i=470 residual=0.0003172367869410664
+   DEBUG:root:i=471 residual=0.0003172379801981151
+   DEBUG:root:i=472 residual=0.00031723809661343694
+   DEBUG:root:i=473 residual=0.0003172380675096065
+   DEBUG:root:i=474 residual=0.00031393690733239055
+   DEBUG:root:i=475 residual=0.00031723667052574456
+   DEBUG:root:i=476 residual=0.0003172381257172674
+   DEBUG:root:i=477 residual=0.0003172381257172674
+   DEBUG:root:i=478 residual=0.0003172381257172674
+   DEBUG:root:i=479 residual=0.0003172380675096065
+   DEBUG:root:i=480 residual=0.0003139355103485286
+   DEBUG:root:i=481 residual=0.00032053940230980515
+   DEBUG:root:i=482 residual=0.0003172408905811608
+   DEBUG:root:i=483 residual=0.0003172381839249283
+   DEBUG:root:i=484 residual=0.0003172381257172674
+   DEBUG:root:i=485 residual=0.0003172381839249283
+   DEBUG:root:i=486 residual=0.0003172381257172674
+   DEBUG:root:i=487 residual=0.0003172381839249283
+   DEBUG:root:i=488 residual=0.0003172394644934684
+   DEBUG:root:i=489 residual=0.00031723672873340547
+   DEBUG:root:i=490 residual=0.0003139354521408677
+   DEBUG:root:i=491 residual=0.00031723672873340547
+   DEBUG:root:i=492 residual=0.0003172380675096065
+   DEBUG:root:i=493 residual=0.000317238038405776
+   DEBUG:root:i=494 residual=0.00031723815482109785
+   DEBUG:root:i=495 residual=0.0003172380675096065
+   DEBUG:root:i=496 residual=0.0003172395227011293
+   DEBUG:root:i=497 residual=0.0003172381257172674
+   DEBUG:root:i=498 residual=0.0003172381257172674
+   DEBUG:root:i=499 residual=0.000317238038405776
+   DEBUG:root:i=500 residual=0.0003172381257172674
+   DEBUG:root:i=501 residual=0.00031723809661343694
+   DEBUG:root:i=502 residual=0.0003172381257172674
+   DEBUG:root:i=503 residual=0.00031723958090879023
+   DEBUG:root:i=504 residual=0.000317238038405776
+   DEBUG:root:i=505 residual=0.0003172381257172674
+   DEBUG:root:i=506 residual=0.0003172381257172674
+   DEBUG:root:i=507 residual=0.0003172367869410664
+   DEBUG:root:i=508 residual=0.0003172381257172674
+   DEBUG:root:i=509 residual=0.00031723958090879023
+   DEBUG:root:i=510 residual=0.0003172381257172674
+   DEBUG:root:i=511 residual=0.0003172380675096065
+   DEBUG:root:i=512 residual=0.0003172381257172674
+   DEBUG:root:i=513 residual=0.0003172381257172674
+   DEBUG:root:i=514 residual=0.0003172381257172674
+   DEBUG:root:i=515 residual=0.000317238038405776
+   DEBUG:root:i=516 residual=0.0003172395227011293
+   DEBUG:root:i=517 residual=0.00031723815482109785
+   DEBUG:root:i=518 residual=0.00031723815482109785
+   DEBUG:root:i=519 residual=0.0003172381257172674
+   DEBUG:root:i=520 residual=0.0003172381257172674
+   DEBUG:root:i=521 residual=0.0003106327203568071
+   DEBUG:root:i=522 residual=0.0003106299554929137
+   DEBUG:root:i=523 residual=0.0003106299554929137
+   DEBUG:root:i=524 residual=0.0003139297477900982
+   DEBUG:root:i=525 residual=0.0003139339096378535
+   DEBUG:root:i=526 residual=0.0003172365832142532
+   DEBUG:root:i=527 residual=0.000317238038405776
+   DEBUG:root:i=528 residual=0.0003172395518049598
+   DEBUG:root:i=529 residual=0.00031723809661343694
+   DEBUG:root:i=530 residual=0.0003172381839249283
+   DEBUG:root:i=531 residual=0.0003172381839249283
+   DEBUG:root:i=532 residual=0.0003172381257172674
+   DEBUG:root:i=533 residual=0.00031723815482109785
+   DEBUG:root:i=534 residual=0.0003172394644934684
+   DEBUG:root:i=535 residual=0.0003172381839249283
+   DEBUG:root:i=536 residual=0.00031723672873340547
+   DEBUG:root:i=537 residual=0.00031393536482937634
+   DEBUG:root:i=538 residual=0.0003139339678455144
+   DEBUG:root:i=539 residual=0.00031063135247677565
+   DEBUG:root:i=540 residual=0.0003073272237088531
+   DEBUG:root:i=541 residual=0.00031392986420542
+   DEBUG:root:i=542 residual=0.0003073285042773932
+   DEBUG:root:i=543 residual=0.0003139298059977591
+   DEBUG:root:i=544 residual=0.0003139324253425002
+   DEBUG:root:i=545 residual=0.0003106312651652843
+   DEBUG:root:i=546 residual=0.0003139326290693134
+   DEBUG:root:i=547 residual=0.0003139339096378535
+   DEBUG:root:i=548 residual=0.0003073286497965455
+   DEBUG:root:i=549 residual=0.0003073244006372988
+   DEBUG:root:i=550 residual=0.00031062704510986805
+   DEBUG:root:i=551 residual=0.00031393111567012966
+   DEBUG:root:i=552 residual=0.0003106312360614538
+   DEBUG:root:i=553 residual=0.0003073271655011922
+   DEBUG:root:i=554 residual=0.0003073244006372988
+   DEBUG:root:i=555 residual=0.0003139296895824373
+   DEBUG:root:i=556 residual=0.00031393393874168396
+   DEBUG:root:i=557 residual=0.0003172366414219141
+   DEBUG:root:i=558 residual=0.0003172379801981151
+   DEBUG:root:i=559 residual=0.00031723809661343694
+   DEBUG:root:i=560 residual=0.0003172381257172674
+   DEBUG:root:i=561 residual=0.0003172381839249283
+   DEBUG:root:i=562 residual=0.000313936936436221
+   DEBUG:root:i=563 residual=0.00031723533174954355
+   DEBUG:root:i=564 residual=0.0003139353357255459
+   DEBUG:root:i=565 residual=0.00031063135247677565
+   DEBUG:root:i=566 residual=0.00031723390566185117
+   DEBUG:root:i=567 residual=0.000317238038405776
+   DEBUG:root:i=568 residual=0.00031723949359729886
+   DEBUG:root:i=569 residual=0.00031723809661343694
+   DEBUG:root:i=570 residual=0.000310632778564468
+   DEBUG:root:i=571 residual=0.0003106299554929137
+   DEBUG:root:i=572 residual=0.0003106285585090518
+   DEBUG:root:i=573 residual=0.00031393111567012966
+   DEBUG:root:i=574 residual=0.00031393382232636213
+   DEBUG:root:i=575 residual=0.000317236699629575
+   DEBUG:root:i=576 residual=0.0003139353939332068
+   DEBUG:root:i=577 residual=0.00031063135247677565
+   DEBUG:root:i=578 residual=0.0003139325708616525
+   DEBUG:root:i=579 residual=0.0003106299554929137
+   DEBUG:root:i=580 residual=0.0003106284129898995
+   DEBUG:root:i=581 residual=0.0003073272237088531
+   DEBUG:root:i=582 residual=0.0003106270742136985
+   DEBUG:root:i=583 residual=0.0003139325126539916
+   DEBUG:root:i=584 residual=0.00031063129426911473
+   DEBUG:root:i=585 residual=0.0003172352153342217
+   DEBUG:root:i=586 residual=0.0003172366414219141
+   DEBUG:root:i=587 residual=0.00032054074108600616
+   DEBUG:root:i=588 residual=0.0003172395227011293
+   DEBUG:root:i=589 residual=0.0003172381257172674
+   DEBUG:root:i=590 residual=0.0003172395227011293
+   DEBUG:root:i=591 residual=0.0003172381257172674
+   DEBUG:root:i=592 residual=0.0003172381257172674
+   DEBUG:root:i=593 residual=0.0003172380675096065
+   DEBUG:root:i=594 residual=0.0003172381839249283
+   DEBUG:root:i=595 residual=0.00031723809661343694
+   DEBUG:root:i=596 residual=0.0003172394644934684
+   DEBUG:root:i=597 residual=0.0003172381257172674
+   DEBUG:root:i=598 residual=0.0003139354521408677
+   DEBUG:root:i=599 residual=0.0003205394314136356
+   DEBUG:root:i=600 residual=0.0003172395227011293
+   DEBUG:root:i=601 residual=0.0003172381257172674
+   DEBUG:root:i=602 residual=0.0003172380675096065
+   DEBUG:root:i=603 residual=0.0003172395227011293
+   DEBUG:root:i=604 residual=0.0003172382421325892
+   DEBUG:root:i=605 residual=0.0003172367869410664
+   DEBUG:root:i=606 residual=0.0003139354521408677
+   DEBUG:root:i=607 residual=0.0003139339096378535
+   DEBUG:root:i=608 residual=0.0003106313233729452
+   DEBUG:root:i=609 residual=0.00031393259996548295
+   DEBUG:root:i=610 residual=0.00030732862069271505
+   DEBUG:root:i=611 residual=0.0003139298059977591
+   DEBUG:root:i=612 residual=0.00031393382232636213
+   DEBUG:root:i=613 residual=0.00031062992638908327
+   DEBUG:root:i=614 residual=0.0003139325126539916
+   DEBUG:root:i=615 residual=0.0003073272528126836
+   DEBUG:root:i=616 residual=0.00031393111567012966
+   DEBUG:root:i=617 residual=0.00030732856248505414
+   DEBUG:root:i=618 residual=0.0003139298059977591
+   DEBUG:root:i=619 residual=0.0003172352153342217
+   DEBUG:root:i=620 residual=0.000317238038405776
+   DEBUG:root:i=621 residual=0.000320542196277529
+   DEBUG:root:i=622 residual=0.000320542196277529
+   DEBUG:root:i=623 residual=0.0003172394644934684
+   DEBUG:root:i=624 residual=0.0003172381839249283
+   DEBUG:root:i=625 residual=0.00031393684912472963
+   DEBUG:root:i=626 residual=0.0003172367869410664
+   DEBUG:root:i=627 residual=0.000317238038405776
+   DEBUG:root:i=628 residual=0.0003172380675096065
+   DEBUG:root:i=629 residual=0.0003172381257172674
+   DEBUG:root:i=630 residual=0.00031723815482109785
+   DEBUG:root:i=631 residual=0.0003172381257172674
+   DEBUG:root:i=632 residual=0.0003172381839249283
+   DEBUG:root:i=633 residual=0.0003172395227011293
+   DEBUG:root:i=634 residual=0.000317238038405776
+   DEBUG:root:i=635 residual=0.0003172381257172674
+   DEBUG:root:i=636 residual=0.000317236699629575
+   DEBUG:root:i=637 residual=0.00031723809661343694
+   DEBUG:root:i=638 residual=0.00031723809661343694
+   DEBUG:root:i=639 residual=0.0003172395227011293
+   DEBUG:root:i=640 residual=0.0003172381257172674
+   DEBUG:root:i=641 residual=0.0003139355103485286
+   DEBUG:root:i=642 residual=0.0003172367869410664
+   DEBUG:root:i=643 residual=0.000317238038405776
+   DEBUG:root:i=644 residual=0.00031723815482109785
+   DEBUG:root:i=645 residual=0.0003172379801981151
+   DEBUG:root:i=646 residual=0.00031393542303703725
+   DEBUG:root:i=647 residual=0.00031393402605317533
+   DEBUG:root:i=648 residual=0.00031393402605317533
+   DEBUG:root:i=649 residual=0.00031723667052574456
+   DEBUG:root:i=650 residual=0.00032054015900939703
+   DEBUG:root:i=651 residual=0.00031724144355393946
+   DEBUG:root:i=652 residual=0.0003172383294440806
+   DEBUG:root:i=653 residual=0.00031723821302875876
+   DEBUG:root:i=654 residual=0.0003139355394523591
+   DEBUG:root:i=655 residual=0.000317236699629575
+   DEBUG:root:i=656 residual=0.00031723815482109785
+   DEBUG:root:i=657 residual=0.00031723800930194557
+   DEBUG:root:i=658 residual=0.0003172395227011293
+   DEBUG:root:i=659 residual=0.0003172381257172674
+   DEBUG:root:i=660 residual=0.00031723815482109785
+   DEBUG:root:i=661 residual=0.00031723809661343694
+   DEBUG:root:i=662 residual=0.00031723815482109785
+   DEBUG:root:i=663 residual=0.000317238038405776
+   DEBUG:root:i=664 residual=0.00031723809661343694
+   DEBUG:root:i=665 residual=0.0003172395227011293
+   DEBUG:root:i=666 residual=0.0003172381839249283
+   DEBUG:root:i=667 residual=0.0003172381839249283
+   DEBUG:root:i=668 residual=0.0003172380675096065
+   DEBUG:root:i=669 residual=0.00031723815482109785
+   DEBUG:root:i=670 residual=0.000317236699629575
+   DEBUG:root:i=671 residual=0.0003172395227011293
+   DEBUG:root:i=672 residual=0.0003172381257172674
+   DEBUG:root:i=673 residual=0.0003139354521408677
+   DEBUG:root:i=674 residual=0.00031723667052574456
+   DEBUG:root:i=675 residual=0.0003172380675096065
+   DEBUG:root:i=676 residual=0.0003172381257172674
+   DEBUG:root:i=677 residual=0.00031723809661343694
+   DEBUG:root:i=678 residual=0.00031723821302875876
+   DEBUG:root:i=679 residual=0.00031723943538963795
+   DEBUG:root:i=680 residual=0.0003172381839249283
+   DEBUG:root:i=681 residual=0.00032054074108600616
+   DEBUG:root:i=682 residual=0.0003205422544851899
+   DEBUG:root:i=683 residual=0.00031724097789265215
+   DEBUG:root:i=684 residual=0.0003139355103485286
+   DEBUG:root:i=685 residual=0.00031723672873340547
+   DEBUG:root:i=686 residual=0.000317238038405776
+   DEBUG:root:i=687 residual=0.00031723821302875876
+   DEBUG:root:i=688 residual=0.0003172381257172674
+   DEBUG:root:i=689 residual=0.00031723815482109785
+   DEBUG:root:i=690 residual=0.00031723675783723593
+   DEBUG:root:i=691 residual=0.00031723943538963795
+   DEBUG:root:i=692 residual=0.0003172381257172674
+   DEBUG:root:i=693 residual=0.0003172381257172674
+   DEBUG:root:i=694 residual=0.0003172381839249283
+   DEBUG:root:i=695 residual=0.0003172380675096065
+   DEBUG:root:i=696 residual=0.0003172381257172674
+   DEBUG:root:i=697 residual=0.0003172394644934684
+   DEBUG:root:i=698 residual=0.0003172381839249283
+   DEBUG:root:i=699 residual=0.0003172380675096065
+   DEBUG:root:i=700 residual=0.00031723815482109785
+   DEBUG:root:i=701 residual=0.00031723809661343694
+   DEBUG:root:i=702 residual=0.0003172381257172674
+   DEBUG:root:i=703 residual=0.0003172381257172674
+   DEBUG:root:i=704 residual=0.0003139368200208992
+   DEBUG:root:i=705 residual=0.0003139341133646667
+   DEBUG:root:i=706 residual=0.00031062992638908327
+   DEBUG:root:i=707 residual=0.00031393117387779057
+   DEBUG:root:i=708 residual=0.0003106312360614538
+   DEBUG:root:i=709 residual=0.00031393254175782204
+   DEBUG:root:i=710 residual=0.00031393393874168396
+   DEBUG:root:i=711 residual=0.0003172366414219141
+   DEBUG:root:i=712 residual=0.00031723809661343694
+   DEBUG:root:i=713 residual=0.0003205407119821757
+   DEBUG:root:i=714 residual=0.00031723958090879023
+   DEBUG:root:i=715 residual=0.0003172381839249283
+   DEBUG:root:i=716 residual=0.0003172395518049598
+   DEBUG:root:i=717 residual=0.0003172381839249283
+   DEBUG:root:i=718 residual=0.000317238038405776
+   DEBUG:root:i=719 residual=0.00031723672873340547
+   DEBUG:root:i=720 residual=0.000317238038405776
+   DEBUG:root:i=721 residual=0.00031723815482109785
+   DEBUG:root:i=722 residual=0.0003172394644934684
+   DEBUG:root:i=723 residual=0.0003172381839249283
+   DEBUG:root:i=724 residual=0.00031723809661343694
+   DEBUG:root:i=725 residual=0.00031723815482109785
+   DEBUG:root:i=726 residual=0.0003172381257172674
+   DEBUG:root:i=727 residual=0.00031723809661343694
+   DEBUG:root:i=728 residual=0.0003139354521408677
+   DEBUG:root:i=729 residual=0.00031723661231808364
+   DEBUG:root:i=730 residual=0.00031723949359729886
+   DEBUG:root:i=731 residual=0.0003172381257172674
+   DEBUG:root:i=732 residual=0.00031723815482109785
+   DEBUG:root:i=733 residual=0.0003172381257172674
+   DEBUG:root:i=734 residual=0.00031723821302875876
+   DEBUG:root:i=735 residual=0.000317238038405776
+   DEBUG:root:i=736 residual=0.00031723809661343694
+   DEBUG:root:i=737 residual=0.0003172395227011293
+   DEBUG:root:i=738 residual=0.00031723675783723593
+   DEBUG:root:i=739 residual=0.0003172381257172674
+   DEBUG:root:i=740 residual=0.0003139353357255459
+   DEBUG:root:i=741 residual=0.0003106313815806061
+   DEBUG:root:i=742 residual=0.0003139325708616525
+   DEBUG:root:i=743 residual=0.0003106313233729452
+   DEBUG:root:i=744 residual=0.00031062844209372997
+   DEBUG:root:i=745 residual=0.00031062992638908327
+   DEBUG:root:i=746 residual=0.00031393111567012966
+   DEBUG:root:i=747 residual=0.00031393388053402305
+   DEBUG:root:i=748 residual=0.000317236699629575
+   DEBUG:root:i=749 residual=0.000317238038405776
+   DEBUG:root:i=750 residual=0.00031723815482109785
+   DEBUG:root:i=751 residual=0.000317238038405776
+   DEBUG:root:i=752 residual=0.00032054082839749753
+   DEBUG:root:i=753 residual=0.00031724091968499124
+   DEBUG:root:i=754 residual=0.00031723821302875876
+   DEBUG:root:i=755 residual=0.00031723815482109785
+   DEBUG:root:i=756 residual=0.00031723809661343694
+   DEBUG:root:i=757 residual=0.0003172381257172674
+   DEBUG:root:i=758 residual=0.0003172381257172674
+   DEBUG:root:i=759 residual=0.0003172381257172674
+   DEBUG:root:i=760 residual=0.0003172394644934684
+   DEBUG:root:i=761 residual=0.0003139355103485286
+   DEBUG:root:i=762 residual=0.00031723667052574456
+   DEBUG:root:i=763 residual=0.00031723675783723593
+   DEBUG:root:i=764 residual=0.0003172380675096065
+   DEBUG:root:i=765 residual=0.00031723809661343694
+   DEBUG:root:i=766 residual=0.00031723815482109785
+   DEBUG:root:i=767 residual=0.0003172381257172674
+   DEBUG:root:i=768 residual=0.00031723943538963795
+   DEBUG:root:i=769 residual=0.0003172381257172674
+   DEBUG:root:i=770 residual=0.00031723815482109785
+   DEBUG:root:i=771 residual=0.00031723815482109785
+   DEBUG:root:i=772 residual=0.0003172381257172674
+   DEBUG:root:i=773 residual=0.000317238038405776
+   DEBUG:root:i=774 residual=0.0003172395227011293
+   DEBUG:root:i=775 residual=0.0003139354521408677
+   DEBUG:root:i=776 residual=0.0003139340551570058
+   DEBUG:root:i=777 residual=0.00031723675783723593
+   DEBUG:root:i=778 residual=0.00031723667052574456
+   DEBUG:root:i=779 residual=0.000317238038405776
+   DEBUG:root:i=780 residual=0.0003172380675096065
+   DEBUG:root:i=781 residual=0.0003172381257172674
+   DEBUG:root:i=782 residual=0.0003205407992936671
+   DEBUG:root:i=783 residual=0.0003205436805728823
+   DEBUG:root:i=784 residual=0.000320542196277529
+   DEBUG:root:i=785 residual=0.000320542196277529
+   DEBUG:root:i=786 residual=0.0003205436223652214
+   DEBUG:root:i=787 residual=0.00031723963911645114
+   DEBUG:root:i=788 residual=0.0003172381839249283
+   DEBUG:root:i=789 residual=0.0003172395227011293
+   DEBUG:root:i=790 residual=0.0003139354521408677
+   DEBUG:root:i=791 residual=0.0003139341133646667
+   DEBUG:root:i=792 residual=0.00031723667052574456
+   DEBUG:root:i=793 residual=0.0003172381257172674
+   DEBUG:root:i=794 residual=0.00031723809661343694
+   DEBUG:root:i=795 residual=0.00031723815482109785
+   DEBUG:root:i=796 residual=0.000317238038405776
+   DEBUG:root:i=797 residual=0.0003172381257172674
+   DEBUG:root:i=798 residual=0.0003172381257172674
+   DEBUG:root:i=799 residual=0.0003172395518049598
+   DEBUG:root:i=800 residual=0.00031723821302875876
+   DEBUG:root:i=801 residual=0.000317238038405776
+   DEBUG:root:i=802 residual=0.00031723672873340547
+   DEBUG:root:i=803 residual=0.000317238038405776
+   DEBUG:root:i=804 residual=0.00031723815482109785
+   DEBUG:root:i=805 residual=0.00031723943538963795
+   DEBUG:root:i=806 residual=0.0003139355394523591
+   DEBUG:root:i=807 residual=0.0003172366414219141
+   DEBUG:root:i=808 residual=0.00032054082839749753
+   DEBUG:root:i=809 residual=0.00031723949359729886
+   DEBUG:root:i=810 residual=0.0003172381839249283
+   DEBUG:root:i=811 residual=0.00031723815482109785
+   DEBUG:root:i=812 residual=0.0003172394062858075
+   DEBUG:root:i=813 residual=0.0003172381839249283
+   DEBUG:root:i=814 residual=0.0003172380675096065
+   DEBUG:root:i=815 residual=0.0003172381257172674
+   DEBUG:root:i=816 residual=0.00031723809661343694
+   DEBUG:root:i=817 residual=0.0003172381257172674
+   DEBUG:root:i=818 residual=0.0003172395227011293
+   DEBUG:root:i=819 residual=0.00031723821302875876
+   DEBUG:root:i=820 residual=0.00031723815482109785
+   DEBUG:root:i=821 residual=0.0003172380675096065
+   DEBUG:root:i=822 residual=0.00031723672873340547
+   DEBUG:root:i=823 residual=0.000317238038405776
+   DEBUG:root:i=824 residual=0.00031723809661343694
+   DEBUG:root:i=825 residual=0.0003139368200208992
+   DEBUG:root:i=826 residual=0.00031723681604489684
+   DEBUG:root:i=827 residual=0.0003172381257172674
+   DEBUG:root:i=828 residual=0.0003172381257172674
+   DEBUG:root:i=829 residual=0.00031723809661343694
+   DEBUG:root:i=830 residual=0.00031723809661343694
+   DEBUG:root:i=831 residual=0.00031723815482109785
+   DEBUG:root:i=832 residual=0.0003172380675096065
+   DEBUG:root:i=833 residual=0.0003172395518049598
+   DEBUG:root:i=834 residual=0.00031723815482109785
+   DEBUG:root:i=835 residual=0.000317238038405776
+   DEBUG:root:i=836 residual=0.00031723809661343694
+   DEBUG:root:i=837 residual=0.0003172381839249283
+   DEBUG:root:i=838 residual=0.0003139354521408677
+   DEBUG:root:i=839 residual=0.00031063135247677565
+   DEBUG:root:i=840 residual=0.00031723390566185117
+   DEBUG:root:i=841 residual=0.00031723795109428465
+   DEBUG:root:i=842 residual=0.00031723809661343694
+   DEBUG:root:i=843 residual=0.0003172381839249283
+   DEBUG:root:i=844 residual=0.0003172395518049598
+   DEBUG:root:i=845 residual=0.0003172381257172674
+   DEBUG:root:i=846 residual=0.0003172380675096065
+   DEBUG:root:i=847 residual=0.00031723809661343694
+   DEBUG:root:i=848 residual=0.0003172381257172674
+   DEBUG:root:i=849 residual=0.00031723809661343694
+   DEBUG:root:i=850 residual=0.0003172395518049598
+   DEBUG:root:i=851 residual=0.00031723809661343694
+   DEBUG:root:i=852 residual=0.0003172381257172674
+   DEBUG:root:i=853 residual=0.00031723815482109785
+   DEBUG:root:i=854 residual=0.00031723809661343694
+   DEBUG:root:i=855 residual=0.0003172381839249283
+   DEBUG:root:i=856 residual=0.00031723667052574456
+   DEBUG:root:i=857 residual=0.00031723943538963795
+   DEBUG:root:i=858 residual=0.00031723809661343694
+   DEBUG:root:i=859 residual=0.0003172381257172674
+   DEBUG:root:i=860 residual=0.00031723809661343694
+   DEBUG:root:i=861 residual=0.00031723815482109785
+   DEBUG:root:i=862 residual=0.0003172381257172674
+   DEBUG:root:i=863 residual=0.0003172395227011293
+   DEBUG:root:i=864 residual=0.00031393548124469817
+   DEBUG:root:i=865 residual=0.0003139339969493449
+   DEBUG:root:i=866 residual=0.00031063135247677565
+   DEBUG:root:i=867 residual=0.00031723390566185117
+   DEBUG:root:i=868 residual=0.00031723800930194557
+   DEBUG:root:i=869 residual=0.0003139368200208992
+   DEBUG:root:i=870 residual=0.0003073273110203445
+   DEBUG:root:i=871 residual=0.0003172325377818197
+   DEBUG:root:i=872 residual=0.000317238038405776
+   DEBUG:root:i=873 residual=0.00031723800930194557
+   DEBUG:root:i=874 residual=0.00031723809661343694
+   DEBUG:root:i=875 residual=0.00031723949359729886
+   DEBUG:root:i=876 residual=0.00031723815482109785
+   DEBUG:root:i=877 residual=0.00031723809661343694
+   DEBUG:root:i=878 residual=0.00031723815482109785
+   DEBUG:root:i=879 residual=0.000317238038405776
+   DEBUG:root:i=880 residual=0.00031393548124469817
+   DEBUG:root:i=881 residual=0.00031723672873340547
+   DEBUG:root:i=882 residual=0.0003172381257172674
+   DEBUG:root:i=883 residual=0.0003172395227011293
+   DEBUG:root:i=884 residual=0.00031723667052574456
+   DEBUG:root:i=885 residual=0.0003172380675096065
+   DEBUG:root:i=886 residual=0.0003172381257172674
+   DEBUG:root:i=887 residual=0.0003172381257172674
+   DEBUG:root:i=888 residual=0.0003172381257172674
+   DEBUG:root:i=889 residual=0.0003172381839249283
+   DEBUG:root:i=890 residual=0.00031723943538963795
+   DEBUG:root:i=891 residual=0.00031723675783723593
+   DEBUG:root:i=892 residual=0.0003172380675096065
+   DEBUG:root:i=893 residual=0.00031393548124469817
+   DEBUG:root:i=894 residual=0.00031063135247677565
+   DEBUG:root:i=895 residual=0.0003139325126539916
+   DEBUG:root:i=896 residual=0.0003106312651652843
+   DEBUG:root:i=897 residual=0.0003106271324213594
+   DEBUG:root:i=898 residual=0.0003073271072935313
+   DEBUG:root:i=899 residual=0.0003139298059977591
+   DEBUG:root:i=900 residual=0.00031723661231808364
+   DEBUG:root:i=901 residual=0.0003172394062858075
+   DEBUG:root:i=902 residual=0.00031723815482109785
+   DEBUG:root:i=903 residual=0.0003205407701898366
+   DEBUG:root:i=904 residual=0.00031723958090879023
+   DEBUG:root:i=905 residual=0.0003172381257172674
+   DEBUG:root:i=906 residual=0.00031723809661343694
+   DEBUG:root:i=907 residual=0.00031723815482109785
+   DEBUG:root:i=908 residual=0.000317238038405776
+   DEBUG:root:i=909 residual=0.00031393548124469817
+   DEBUG:root:i=910 residual=0.00031723667052574456
+   DEBUG:root:i=911 residual=0.0003172381257172674
+   DEBUG:root:i=912 residual=0.000317238038405776
+   DEBUG:root:i=913 residual=0.00031393548124469817
+   DEBUG:root:i=914 residual=0.00031063129426911473
+   DEBUG:root:i=915 residual=0.00031393265817314386
+   DEBUG:root:i=916 residual=0.0003205393732059747
+   DEBUG:root:i=917 residual=0.00031723943538963795
+   DEBUG:root:i=918 residual=0.0003172381257172674
+   DEBUG:root:i=919 residual=0.0003172395518049598
+   DEBUG:root:i=920 residual=0.0003172381839249283
+   DEBUG:root:i=921 residual=0.00031723809661343694
+   DEBUG:root:i=922 residual=0.00031723675783723593
+   DEBUG:root:i=923 residual=0.000317238038405776
+   DEBUG:root:i=924 residual=0.00031723809661343694
+   DEBUG:root:i=925 residual=0.0003139368200208992
+   DEBUG:root:i=926 residual=0.0003139327163808048
+   DEBUG:root:i=927 residual=0.0003106312651652843
+   DEBUG:root:i=928 residual=0.0003106298972852528
+   DEBUG:root:i=929 residual=0.0003106298390775919
+   DEBUG:root:i=930 residual=0.0003139312320854515
+   DEBUG:root:i=931 residual=0.0003172352153342217
+   DEBUG:root:i=932 residual=0.00031723943538963795
+   DEBUG:root:i=933 residual=0.0003205407992936671
+   DEBUG:root:i=934 residual=0.00031723949359729886
+   DEBUG:root:i=935 residual=0.00032054088660515845
+   DEBUG:root:i=936 residual=0.00032054365146905184
+   DEBUG:root:i=937 residual=0.00032054228358902037
+   DEBUG:root:i=938 residual=0.0003172396100126207
+   DEBUG:root:i=939 residual=0.0003172394644934684
+   DEBUG:root:i=940 residual=0.00031393548124469817
+   DEBUG:root:i=941 residual=0.00031723675783723593
+   DEBUG:root:i=942 residual=0.0003172380675096065
+   DEBUG:root:i=943 residual=0.00031723815482109785
+   DEBUG:root:i=944 residual=0.0003172380675096065
+   DEBUG:root:i=945 residual=0.0003172381257172674
+   DEBUG:root:i=946 residual=0.000317238038405776
+   DEBUG:root:i=947 residual=0.0003172395518049598
+   DEBUG:root:i=948 residual=0.00031723809661343694
+   DEBUG:root:i=949 residual=0.0003172381839249283
+   DEBUG:root:i=950 residual=0.000317238038405776
+   DEBUG:root:i=951 residual=0.0003172381257172674
+   DEBUG:root:i=952 residual=0.0003172381257172674
+   DEBUG:root:i=953 residual=0.00031723672873340547
+   DEBUG:root:i=954 residual=0.0003172395227011293
+   DEBUG:root:i=955 residual=0.0003172381257172674
+   DEBUG:root:i=956 residual=0.0003139353939332068
+   DEBUG:root:i=957 residual=0.000317236699629575
+   DEBUG:root:i=958 residual=0.0003172381257172674
+   DEBUG:root:i=959 residual=0.0003139353939332068
+   DEBUG:root:i=960 residual=0.00031723675783723593
+   DEBUG:root:i=961 residual=0.0003172379801981151
+   DEBUG:root:i=962 residual=0.00031723815482109785
+   DEBUG:root:i=963 residual=0.00031723949359729886
+   DEBUG:root:i=964 residual=0.00031723815482109785
+   DEBUG:root:i=965 residual=0.00031723815482109785
+   DEBUG:root:i=966 residual=0.00032054088660515845
+   DEBUG:root:i=967 residual=0.00032054216717369854
+   DEBUG:root:i=968 residual=0.00031724091968499124
+   DEBUG:root:i=969 residual=0.0003172382421325892
+   DEBUG:root:i=970 residual=0.0003172381257172674
+   DEBUG:root:i=971 residual=0.00031723809661343694
+   DEBUG:root:i=972 residual=0.000317238038405776
+   DEBUG:root:i=973 residual=0.0003172381257172674
+   DEBUG:root:i=974 residual=0.0003172381257172674
+   DEBUG:root:i=975 residual=0.00031723809661343694
+   DEBUG:root:i=976 residual=0.00031723815482109785
+   DEBUG:root:i=977 residual=0.00031723815482109785
+   DEBUG:root:i=978 residual=0.00031723809661343694
+   DEBUG:root:i=979 residual=0.0003172380675096065
+   DEBUG:root:i=980 residual=0.0003172395518049598
+   DEBUG:root:i=981 residual=0.0003172381257172674
+   DEBUG:root:i=982 residual=0.0003172381257172674
+   DEBUG:root:i=983 residual=0.00031723809661343694
+   DEBUG:root:i=984 residual=0.00031723809661343694
+   DEBUG:root:i=985 residual=0.0003172381839249283
+   DEBUG:root:i=986 residual=0.0003172394644934684
+   DEBUG:root:i=987 residual=0.0003172381839249283
+   DEBUG:root:i=988 residual=0.00031393542303703725
+   DEBUG:root:i=989 residual=0.00031723672873340547
+   DEBUG:root:i=990 residual=0.0003172380675096065
+   DEBUG:root:i=991 residual=0.00031723809661343694
+   DEBUG:root:i=992 residual=0.00031723675783723593
+   DEBUG:root:i=993 residual=0.00031723809661343694
+   DEBUG:root:i=994 residual=0.0003172395518049598
+   DEBUG:root:i=995 residual=0.0003172383294440806
+   DEBUG:root:i=996 residual=0.00031723821302875876
+   DEBUG:root:i=997 residual=0.0003172381257172674
+   DEBUG:root:i=998 residual=0.0003172381257172674
+   DEBUG:root:i=999 residual=0.0003205407992936671
+   INFO:root:rank=0 pagerank=1.0623e+01 url=www.lawfareblog.com/snowden-revelations
+   INFO:root:rank=1 pagerank=1.0623e+01 url=www.lawfareblog.com/lawfare-job-board
+   INFO:root:rank=2 pagerank=1.0623e+01 url=www.lawfareblog.com/masthead
+   INFO:root:rank=3 pagerank=1.0623e+01 url=www.lawfareblog.com/litigation-documents-resources-related-travel-ban
+   INFO:root:rank=4 pagerank=1.0623e+01 url=www.lawfareblog.com/subscribe-lawfare
+   INFO:root:rank=5 pagerank=1.0623e+01 url=www.lawfareblog.com/litigation-documents-related-appointment-matthew-whitaker-acting-attorney-general
+   INFO:root:rank=6 pagerank=1.0623e+01 url=www.lawfareblog.com/documents-related-mueller-investigation
+   INFO:root:rank=7 pagerank=1.0623e+01 url=www.lawfareblog.com/our-comments-policy
+   INFO:root:rank=8 pagerank=1.0623e+01 url=www.lawfareblog.com/upcoming-events
+   INFO:root:rank=9 pagerank=1.0623e+01 url=www.lawfareblog.com/topics
 
-   $ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --filter_ratio=0.2
+   Noahs-MacBook-Air-7:Project 1 noahbenjamin$ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --filter_ratio=0.2
    DEBUG:root:computing indices
-    DEBUG:root:computing values
-    DEBUG:root:i=0 residual=5.117101669311523
-    DEBUG:root:i=1 residual=2.98054838180542
-    DEBUG:root:i=2 residual=2.449281692504883
-    DEBUG:root:i=3 residual=1.6987284421920776
-    DEBUG:root:i=4 residual=1.1001768112182617
-    DEBUG:root:i=5 residual=0.7298168540000916
-    DEBUG:root:i=6 residual=0.514804482460022
-    DEBUG:root:i=7 residual=0.37960854172706604
-    DEBUG:root:i=8 residual=0.2851005792617798
-    DEBUG:root:i=9 residual=0.2157147377729416
-    DEBUG:root:i=10 residual=0.16483613848686218
-    DEBUG:root:i=11 residual=0.12841668725013733
-    DEBUG:root:i=12 residual=0.1030462384223938
-    DEBUG:root:i=13 residual=0.085592120885849
-    DEBUG:root:i=14 residual=0.07334097474813461
-    DEBUG:root:i=15 residual=0.06422971189022064
-    DEBUG:root:i=16 residual=0.05689748004078865
-    DEBUG:root:i=17 residual=0.05057037994265556
-    DEBUG:root:i=18 residual=0.044863320887088776
-    DEBUG:root:i=19 residual=0.03961250185966492
-    DEBUG:root:i=20 residual=0.034764885902404785
-    DEBUG:root:i=21 residual=0.03031623177230358
-    DEBUG:root:i=22 residual=0.026270048692822456
-    DEBUG:root:i=23 residual=0.02262847311794758
-    DEBUG:root:i=24 residual=0.019384725019335747
-    DEBUG:root:i=25 residual=0.01652359403669834
-    DEBUG:root:i=26 residual=0.01402196567505598
-    DEBUG:root:i=27 residual=0.011852107010781765
-    DEBUG:root:i=28 residual=0.009982410818338394
-    DEBUG:root:i=29 residual=0.008381717838346958
-    DEBUG:root:i=30 residual=0.007018421310931444
-    DEBUG:root:i=31 residual=0.0058631389401853085
-    DEBUG:root:i=32 residual=0.004887986462563276
-    DEBUG:root:i=33 residual=0.004067579284310341
-    DEBUG:root:i=34 residual=0.0033798094373196363
-    DEBUG:root:i=35 residual=0.002804710064083338
-    DEBUG:root:i=36 residual=0.002325073117390275
-    DEBUG:root:i=37 residual=0.0019253286300227046
-    DEBUG:root:i=38 residual=0.0015934096882119775
-    DEBUG:root:i=39 residual=0.001317828893661499
-    DEBUG:root:i=40 residual=0.0010893536964431405
-    DEBUG:root:i=41 residual=0.0009003734448924661
-    DEBUG:root:i=42 residual=0.0007438278989866376
-    DEBUG:root:i=43 residual=0.000614594726357609
-    DEBUG:root:i=44 residual=0.0005075939698144794
-    DEBUG:root:i=45 residual=0.00041933314059861004
-    DEBUG:root:i=46 residual=0.0003463232715148479
-    DEBUG:root:i=47 residual=0.0002862203982658684
-    DEBUG:root:i=48 residual=0.0002364680403843522
-    DEBUG:root:i=49 residual=0.00019547472766134888
-    DEBUG:root:i=50 residual=0.00016164907719939947
-    DEBUG:root:i=51 residual=0.0001335902779828757
-    DEBUG:root:i=52 residual=0.00011043175618397072
-    DEBUG:root:i=53 residual=9.14798874873668e-05
-    DEBUG:root:i=54 residual=7.559930963907391e-05
-    DEBUG:root:i=55 residual=6.267009302973747e-05
-    DEBUG:root:i=56 residual=5.190669617149979e-05
-    DEBUG:root:i=57 residual=4.3006890336982906e-05
-    DEBUG:root:i=58 residual=3.575401206035167e-05
-    DEBUG:root:i=59 residual=2.962066173495259e-05
-    DEBUG:root:i=60 residual=2.447017322992906e-05
-    DEBUG:root:i=61 residual=2.038401726167649e-05
-    DEBUG:root:i=62 residual=1.700241773505695e-05
-    DEBUG:root:i=63 residual=1.4064952665648889e-05
-    DEBUG:root:i=64 residual=1.1607784472289495e-05
-    DEBUG:root:i=65 residual=9.675569344835822e-06
-    DEBUG:root:i=66 residual=8.003130460565444e-06
-    DEBUG:root:i=67 residual=6.706614385620924e-06
-    DEBUG:root:i=68 residual=5.564526418311289e-06
-    DEBUG:root:i=69 residual=4.69915403300547e-06
-    DEBUG:root:i=70 residual=3.861688583128853e-06
-    DEBUG:root:i=71 residual=3.195056933691376e-06
-    DEBUG:root:i=72 residual=2.689925850063446e-06
-    DEBUG:root:i=73 residual=2.1902019398112316e-06
-    DEBUG:root:i=74 residual=1.874520876299357e-06
-    DEBUG:root:i=75 residual=1.5876914858381497e-06
-    DEBUG:root:i=76 residual=1.3520267430067179e-06
-    DEBUG:root:i=77 residual=1.1579003285078215e-06
-    DEBUG:root:i=78 residual=9.071951012629142e-07
-    INFO:root:rank=0 pagerank=4.6096e+00 url=www.lawfareblog.com/trump-asks-supreme-court-stay-congressional-subpeona-tax-returns
-    INFO:root:rank=1 pagerank=2.9870e+00 url=www.lawfareblog.com/livestream-nov-21-impeachment-hearings-0
-    INFO:root:rank=2 pagerank=2.9672e+00 url=www.lawfareblog.com/opening-statement-david-holmes
-    INFO:root:rank=3 pagerank=2.0175e+00 url=www.lawfareblog.com/senate-examines-threats-homeland
-    INFO:root:rank=4 pagerank=1.8771e+00 url=www.lawfareblog.com/what-make-first-day-impeachment-hearings
-    INFO:root:rank=5 pagerank=1.8764e+00 url=www.lawfareblog.com/livestream-house-armed-services-committee-hearing-f-35-program
-    INFO:root:rank=6 pagerank=1.8695e+00 url=www.lawfareblog.com/whats-house-resolution-impeachment
-    INFO:root:rank=7 pagerank=1.7657e+00 url=www.lawfareblog.com/congress-us-policy-toward-syria-and-turkey-overview-recent-hearings
-    INFO:root:rank=8 pagerank=1.6809e+00 url=www.lawfareblog.com/summary-david-holmess-deposition-testimony
-    INFO:root:rank=9 pagerank=9.8355e-01 url=www.lawfareblog.com/events
+   DEBUG:root:computing values
+   DEBUG:root:i=0 residual=5.117101669311523
+   DEBUG:root:i=1 residual=2.98054838180542
+   DEBUG:root:i=2 residual=2.449281692504883
+   DEBUG:root:i=3 residual=1.6987284421920776
+   DEBUG:root:i=4 residual=1.1001768112182617
+   DEBUG:root:i=5 residual=0.7298168540000916
+   DEBUG:root:i=6 residual=0.514804482460022
+   DEBUG:root:i=7 residual=0.37960854172706604
+   DEBUG:root:i=8 residual=0.2851005792617798
+   DEBUG:root:i=9 residual=0.2157147377729416
+   DEBUG:root:i=10 residual=0.16483613848686218
+   DEBUG:root:i=11 residual=0.12841668725013733
+   DEBUG:root:i=12 residual=0.1030462384223938
+   DEBUG:root:i=13 residual=0.085592120885849
+   DEBUG:root:i=14 residual=0.07334097474813461
+   DEBUG:root:i=15 residual=0.06422971189022064
+   DEBUG:root:i=16 residual=0.05689748004078865
+   DEBUG:root:i=17 residual=0.05057037994265556
+   DEBUG:root:i=18 residual=0.044863320887088776
+   DEBUG:root:i=19 residual=0.03961250185966492
+   DEBUG:root:i=20 residual=0.034764885902404785
+   DEBUG:root:i=21 residual=0.03031623177230358
+   DEBUG:root:i=22 residual=0.026270048692822456
+   DEBUG:root:i=23 residual=0.02262847311794758
+   DEBUG:root:i=24 residual=0.019384725019335747
+   DEBUG:root:i=25 residual=0.01652359403669834
+   DEBUG:root:i=26 residual=0.01402196567505598
+   DEBUG:root:i=27 residual=0.011852107010781765
+   DEBUG:root:i=28 residual=0.009982410818338394
+   DEBUG:root:i=29 residual=0.008381717838346958
+   DEBUG:root:i=30 residual=0.007018421310931444
+   DEBUG:root:i=31 residual=0.0058631389401853085
+   DEBUG:root:i=32 residual=0.004887986462563276
+   DEBUG:root:i=33 residual=0.004067579284310341
+   DEBUG:root:i=34 residual=0.0033798094373196363
+   DEBUG:root:i=35 residual=0.002804710064083338
+   DEBUG:root:i=36 residual=0.002325073117390275
+   DEBUG:root:i=37 residual=0.0019253286300227046
+   DEBUG:root:i=38 residual=0.0015934096882119775
+   DEBUG:root:i=39 residual=0.001317828893661499
+   DEBUG:root:i=40 residual=0.0010893536964431405
+   DEBUG:root:i=41 residual=0.0009003734448924661
+   DEBUG:root:i=42 residual=0.0007438278989866376
+   DEBUG:root:i=43 residual=0.000614594726357609
+   DEBUG:root:i=44 residual=0.0005075939698144794
+   DEBUG:root:i=45 residual=0.00041933314059861004
+   DEBUG:root:i=46 residual=0.0003463232715148479
+   DEBUG:root:i=47 residual=0.0002862203982658684
+   DEBUG:root:i=48 residual=0.0002364680403843522
+   DEBUG:root:i=49 residual=0.00019547472766134888
+   DEBUG:root:i=50 residual=0.00016164907719939947
+   DEBUG:root:i=51 residual=0.0001335902779828757
+   DEBUG:root:i=52 residual=0.00011043175618397072
+   DEBUG:root:i=53 residual=9.14798874873668e-05
+   DEBUG:root:i=54 residual=7.559930963907391e-05
+   DEBUG:root:i=55 residual=6.267009302973747e-05
+   DEBUG:root:i=56 residual=5.190669617149979e-05
+   DEBUG:root:i=57 residual=4.3006890336982906e-05
+   DEBUG:root:i=58 residual=3.575401206035167e-05
+   DEBUG:root:i=59 residual=2.962066173495259e-05
+   DEBUG:root:i=60 residual=2.447017322992906e-05
+   DEBUG:root:i=61 residual=2.038401726167649e-05
+   DEBUG:root:i=62 residual=1.700241773505695e-05
+   DEBUG:root:i=63 residual=1.4064952665648889e-05
+   DEBUG:root:i=64 residual=1.1607784472289495e-05
+   DEBUG:root:i=65 residual=9.675569344835822e-06
+   DEBUG:root:i=66 residual=8.003130460565444e-06
+   DEBUG:root:i=67 residual=6.706614385620924e-06
+   DEBUG:root:i=68 residual=5.564526418311289e-06
+   DEBUG:root:i=69 residual=4.69915403300547e-06
+   DEBUG:root:i=70 residual=3.861688583128853e-06
+   DEBUG:root:i=71 residual=3.195056933691376e-06
+   DEBUG:root:i=72 residual=2.689925850063446e-06
+   DEBUG:root:i=73 residual=2.1902019398112316e-06
+   DEBUG:root:i=74 residual=1.874520876299357e-06
+   DEBUG:root:i=75 residual=1.5876914858381497e-06
+   DEBUG:root:i=76 residual=1.3520267430067179e-06
+   DEBUG:root:i=77 residual=1.1579003285078215e-06
+   DEBUG:root:i=78 residual=9.071951012629142e-07
+   INFO:root:rank=0 pagerank=4.6096e+00 url=www.lawfareblog.com/trump-asks-supreme-court-stay-congressional-subpeona-tax-returns
+   INFO:root:rank=1 pagerank=2.9870e+00 url=www.lawfareblog.com/livestream-nov-21-impeachment-hearings-0
+   INFO:root:rank=2 pagerank=2.9672e+00 url=www.lawfareblog.com/opening-statement-david-holmes
+   INFO:root:rank=3 pagerank=2.0175e+00 url=www.lawfareblog.com/senate-examines-threats-homeland
+   INFO:root:rank=4 pagerank=1.8771e+00 url=www.lawfareblog.com/what-make-first-day-impeachment-hearings
+   INFO:root:rank=5 pagerank=1.8764e+00 url=www.lawfareblog.com/livestream-house-armed-services-committee-hearing-f-35-program
+   INFO:root:rank=6 pagerank=1.8695e+00 url=www.lawfareblog.com/whats-house-resolution-impeachment
+   INFO:root:rank=7 pagerank=1.7657e+00 url=www.lawfareblog.com/congress-us-policy-toward-syria-and-turkey-overview-recent-hearings
+   INFO:root:rank=8 pagerank=1.6809e+00 url=www.lawfareblog.com/summary-david-holmess-deposition-testimony
+   INFO:root:rank=9 pagerank=9.8355e-01 url=www.lawfareblog.com/events
 
-   $ python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --filter_ratio=0.2 --alpha=0.99999
+   python3 pagerank.py --data=data/lawfareblog.csv.gz --verbose --filter_ratio=0.2 --alpha=0.99999
    DEBUG:root:computing indices
-    DEBUG:root:computing indices
-    DEBUG:root:computing values
-    DEBUG:root:i=0 residual=6.020053386688232
-    DEBUG:root:i=1 residual=4.125228404998779
-    DEBUG:root:i=2 residual=3.988126039505005
-    DEBUG:root:i=3 residual=3.254075765609741
-    DEBUG:root:i=4 residual=2.479372501373291
-    DEBUG:root:i=5 residual=1.9349404573440552
-    DEBUG:root:i=6 residual=1.6057358980178833
-    DEBUG:root:i=7 residual=1.3929797410964966
-    DEBUG:root:i=8 residual=1.23079514503479
-    DEBUG:root:i=9 residual=1.0955803394317627
-    DEBUG:root:i=10 residual=0.9848985075950623
-    DEBUG:root:i=11 residual=0.9026888608932495
-    DEBUG:root:i=12 residual=0.8521741032600403
-    DEBUG:root:i=13 residual=0.8327345848083496
-    DEBUG:root:i=14 residual=0.8394583463668823
-    DEBUG:root:i=15 residual=0.8648898005485535
-    DEBUG:root:i=16 residual=0.9013580083847046
-    DEBUG:root:i=17 residual=0.9424903988838196
-    DEBUG:root:i=18 residual=0.9836518168449402
-    DEBUG:root:i=19 residual=1.0217764377593994
-    DEBUG:root:i=20 residual=1.0549976825714111
-    DEBUG:root:i=21 residual=1.0823227167129517
-    DEBUG:root:i=22 residual=1.1033583879470825
-    DEBUG:root:i=23 residual=1.1181119680404663
-    DEBUG:root:i=24 residual=1.1268593072891235
-    DEBUG:root:i=25 residual=1.1300342082977295
-    DEBUG:root:i=26 residual=1.1281659603118896
-    DEBUG:root:i=27 residual=1.1218292713165283
-    DEBUG:root:i=28 residual=1.1116008758544922
-    DEBUG:root:i=29 residual=1.0980504751205444
-    DEBUG:root:i=30 residual=1.0817170143127441
-    DEBUG:root:i=31 residual=1.063097596168518
-    DEBUG:root:i=32 residual=1.0426440238952637
-    DEBUG:root:i=33 residual=1.0207661390304565
-    DEBUG:root:i=34 residual=0.9978272318840027
-    DEBUG:root:i=35 residual=0.9741366505622864
-    DEBUG:root:i=36 residual=0.94997239112854
-    DEBUG:root:i=37 residual=0.9255682229995728
-    DEBUG:root:i=38 residual=0.9011223912239075
-    DEBUG:root:i=39 residual=0.8768019080162048
-    DEBUG:root:i=40 residual=0.8527442812919617
-    DEBUG:root:i=41 residual=0.8290591835975647
-    DEBUG:root:i=42 residual=0.805838406085968
-    DEBUG:root:i=43 residual=0.7831514477729797
-    DEBUG:root:i=44 residual=0.761053740978241
-    DEBUG:root:i=45 residual=0.7395858764648438
-    DEBUG:root:i=46 residual=0.718769371509552
-    DEBUG:root:i=47 residual=0.6986252665519714
-    DEBUG:root:i=48 residual=0.6791634559631348
-    DEBUG:root:i=49 residual=0.6603858470916748
-    DEBUG:root:i=50 residual=0.6422803997993469
-    DEBUG:root:i=51 residual=0.6248456835746765
-    DEBUG:root:i=52 residual=0.608067512512207
-    DEBUG:root:i=53 residual=0.5919292569160461
-    DEBUG:root:i=54 residual=0.5764183402061462
-    DEBUG:root:i=55 residual=0.5615025758743286
-    DEBUG:root:i=56 residual=0.5471742153167725
-    DEBUG:root:i=57 residual=0.5334013104438782
-    DEBUG:root:i=58 residual=0.5201760530471802
-    DEBUG:root:i=59 residual=0.5074620842933655
-    DEBUG:root:i=60 residual=0.4952465891838074
-    DEBUG:root:i=61 residual=0.48350346088409424
-    DEBUG:root:i=62 residual=0.47221434116363525
-    DEBUG:root:i=63 residual=0.46136125922203064
-    DEBUG:root:i=64 residual=0.4509163200855255
-    DEBUG:root:i=65 residual=0.44086456298828125
-    DEBUG:root:i=66 residual=0.4311929941177368
-    DEBUG:root:i=67 residual=0.42187267541885376
-    DEBUG:root:i=68 residual=0.41289952397346497
-    DEBUG:root:i=69 residual=0.4042409062385559
-    DEBUG:root:i=70 residual=0.39590081572532654
-    DEBUG:root:i=71 residual=0.38785088062286377
-    DEBUG:root:i=72 residual=0.38007280230522156
-    DEBUG:root:i=73 residual=0.37257376313209534
-    DEBUG:root:i=74 residual=0.3653225600719452
-    DEBUG:root:i=75 residual=0.35831066966056824
-    DEBUG:root:i=76 residual=0.35153451561927795
-    DEBUG:root:i=77 residual=0.3449753224849701
-    DEBUG:root:i=78 residual=0.3386242985725403
-    DEBUG:root:i=79 residual=0.3324729800224304
-    DEBUG:root:i=80 residual=0.326515793800354
-    DEBUG:root:i=81 residual=0.3207334876060486
-    DEBUG:root:i=82 residual=0.3151363432407379
-    DEBUG:root:i=83 residual=0.30969226360321045
-    DEBUG:root:i=84 residual=0.30441662669181824
-    DEBUG:root:i=85 residual=0.2992931008338928
-    DEBUG:root:i=86 residual=0.29430320858955383
-    DEBUG:root:i=87 residual=0.28946200013160706
-    DEBUG:root:i=88 residual=0.28475886583328247
-    DEBUG:root:i=89 residual=0.28018298745155334
-    DEBUG:root:i=90 residual=0.27571290731430054
-    DEBUG:root:i=91 residual=0.27137741446495056
-    DEBUG:root:i=92 residual=0.2671445906162262
-    DEBUG:root:i=93 residual=0.26302728056907654
-    DEBUG:root:i=94 residual=0.25900697708129883
-    DEBUG:root:i=95 residual=0.255094051361084
-    DEBUG:root:i=96 residual=0.2512669563293457
-    DEBUG:root:i=97 residual=0.24754944443702698
-    DEBUG:root:i=98 residual=0.24391236901283264
-    DEBUG:root:i=99 residual=0.24036064743995667
-    DEBUG:root:i=100 residual=0.23689422011375427
-    DEBUG:root:i=101 residual=0.23350247740745544
-    DEBUG:root:i=102 residual=0.23018257319927216
-    DEBUG:root:i=103 residual=0.22694484889507294
-    DEBUG:root:i=104 residual=0.22378401458263397
-    DEBUG:root:i=105 residual=0.2206839919090271
-    DEBUG:root:i=106 residual=0.217647522687912
-    DEBUG:root:i=107 residual=0.214679554104805
-    DEBUG:root:i=108 residual=0.21177227795124054
-    DEBUG:root:i=109 residual=0.2089359164237976
-    DEBUG:root:i=110 residual=0.2061467468738556
-    DEBUG:root:i=111 residual=0.2034100592136383
-    DEBUG:root:i=112 residual=0.20074409246444702
-    DEBUG:root:i=113 residual=0.19812509417533875
-    DEBUG:root:i=114 residual=0.1955476999282837
-    DEBUG:root:i=115 residual=0.19302237033843994
-    DEBUG:root:i=116 residual=0.1905543953180313
-    DEBUG:root:i=117 residual=0.18812517821788788
-    DEBUG:root:i=118 residual=0.18575048446655273
-    DEBUG:root:i=119 residual=0.1834143102169037
-    DEBUG:root:i=120 residual=0.18111693859100342
-    DEBUG:root:i=121 residual=0.17886587977409363
-    DEBUG:root:i=122 residual=0.17665325105190277
-    DEBUG:root:i=123 residual=0.17448176443576813
-    DEBUG:root:i=124 residual=0.17234870791435242
-    DEBUG:root:i=125 residual=0.17025652527809143
-    DEBUG:root:i=126 residual=0.1681869477033615
-    DEBUG:root:i=127 residual=0.16616344451904297
-    DEBUG:root:i=128 residual=0.16416776180267334
-    DEBUG:root:i=129 residual=0.16221541166305542
-    DEBUG:root:i=130 residual=0.16028283536434174
-    DEBUG:root:i=131 residual=0.15840156376361847
-    DEBUG:root:i=132 residual=0.15653198957443237
-    DEBUG:root:i=133 residual=0.15469783544540405
-    DEBUG:root:i=134 residual=0.15289373695850372
-    DEBUG:root:i=135 residual=0.15112243592739105
-    DEBUG:root:i=136 residual=0.14937590062618256
-    DEBUG:root:i=137 residual=0.1476515382528305
-    DEBUG:root:i=138 residual=0.14595195651054382
-    DEBUG:root:i=139 residual=0.14429275691509247
-    DEBUG:root:i=140 residual=0.14264778792858124
-    DEBUG:root:i=141 residual=0.1410222202539444
-    DEBUG:root:i=142 residual=0.13943710923194885
-    DEBUG:root:i=143 residual=0.13786353170871735
-    DEBUG:root:i=144 residual=0.13631178438663483
-    DEBUG:root:i=145 residual=0.1347847431898117
-    DEBUG:root:i=146 residual=0.1332874447107315
-    DEBUG:root:i=147 residual=0.13180945813655853
-    DEBUG:root:i=148 residual=0.13034816086292267
-    DEBUG:root:i=149 residual=0.12891128659248352
-    DEBUG:root:i=150 residual=0.12748321890830994
-    DEBUG:root:i=151 residual=0.12608490884304047
-    DEBUG:root:i=152 residual=0.12471350282430649
-    DEBUG:root:i=153 residual=0.12335357815027237
-    DEBUG:root:i=154 residual=0.12200227379798889
-    DEBUG:root:i=155 residual=0.12068578600883484
-    DEBUG:root:i=156 residual=0.11937283724546432
-    DEBUG:root:i=157 residual=0.11808948218822479
-    DEBUG:root:i=158 residual=0.11681470274925232
-    DEBUG:root:i=159 residual=0.11555910855531693
-    DEBUG:root:i=160 residual=0.11431993544101715
-    DEBUG:root:i=161 residual=0.11309979856014252
-    DEBUG:root:i=162 residual=0.11189102381467819
-    DEBUG:root:i=163 residual=0.11069595068693161
-    DEBUG:root:i=164 residual=0.10952246189117432
-    DEBUG:root:i=165 residual=0.1083628311753273
-    DEBUG:root:i=166 residual=0.1072196289896965
-    DEBUG:root:i=167 residual=0.10609535872936249
-    DEBUG:root:i=168 residual=0.1049744114279747
-    DEBUG:root:i=169 residual=0.10386469215154648
-    DEBUG:root:i=170 residual=0.10277910530567169
-    DEBUG:root:i=171 residual=0.10169932246208191
-    DEBUG:root:i=172 residual=0.10064121335744858
-    DEBUG:root:i=173 residual=0.09958630800247192
-    DEBUG:root:i=174 residual=0.09855028241872787
-    DEBUG:root:i=175 residual=0.09752540290355682
-    DEBUG:root:i=176 residual=0.09651423990726471
-    DEBUG:root:i=177 residual=0.09551148116588593
-    DEBUG:root:i=178 residual=0.09452755004167557
-    DEBUG:root:i=179 residual=0.09355219453573227
-    DEBUG:root:i=180 residual=0.0925825759768486
-    DEBUG:root:i=181 residual=0.09163172543048859
-    DEBUG:root:i=182 residual=0.0906919613480568
-    DEBUG:root:i=183 residual=0.08976326882839203
-    DEBUG:root:i=184 residual=0.08884299546480179
-    DEBUG:root:i=185 residual=0.08792313933372498
-    DEBUG:root:i=186 residual=0.08703263103961945
-    DEBUG:root:i=187 residual=0.08613483607769012
-    DEBUG:root:i=188 residual=0.08525849133729935
-    DEBUG:root:i=189 residual=0.08439303934574127
-    DEBUG:root:i=190 residual=0.08353336155414581
-    DEBUG:root:i=191 residual=0.08268730342388153
-    DEBUG:root:i=192 residual=0.08184432238340378
-    DEBUG:root:i=193 residual=0.08101481944322586
-    DEBUG:root:i=194 residual=0.08020158112049103
-    DEBUG:root:i=195 residual=0.07939145714044571
-    DEBUG:root:i=196 residual=0.07858704775571823
-    DEBUG:root:i=197 residual=0.07779349386692047
-    DEBUG:root:i=198 residual=0.07701084017753601
-    DEBUG:root:i=199 residual=0.07622608542442322
-    DEBUG:root:i=200 residual=0.07546007633209229
-    DEBUG:root:i=201 residual=0.07469969987869263
-    DEBUG:root:i=202 residual=0.07395804673433304
-    DEBUG:root:i=203 residual=0.07321169227361679
-    DEBUG:root:i=204 residual=0.07248401641845703
-    DEBUG:root:i=205 residual=0.07175420224666595
-    DEBUG:root:i=206 residual=0.07103002071380615
-    DEBUG:root:i=207 residual=0.07032182067632675
-    DEBUG:root:i=208 residual=0.06961940973997116
-    DEBUG:root:i=209 residual=0.0689251646399498
-    DEBUG:root:i=210 residual=0.06824183464050293
-    DEBUG:root:i=211 residual=0.06756409257650375
-    DEBUG:root:i=212 residual=0.06688674539327621
-    DEBUG:root:i=213 residual=0.06622288376092911
-    DEBUG:root:i=214 residual=0.06555677950382233
-    DEBUG:root:i=215 residual=0.06490153819322586
-    DEBUG:root:i=216 residual=0.06425447016954422
-    DEBUG:root:i=217 residual=0.0636182352900505
-    DEBUG:root:i=218 residual=0.06299024075269699
-    DEBUG:root:i=219 residual=0.06235998496413231
-    DEBUG:root:i=220 residual=0.061751026660203934
-    DEBUG:root:i=221 residual=0.061142463237047195
-    DEBUG:root:i=222 residual=0.06053679808974266
-    DEBUG:root:i=223 residual=0.059931445866823196
-    DEBUG:root:i=224 residual=0.05933959037065506
-    DEBUG:root:i=225 residual=0.05875328183174133
-    DEBUG:root:i=226 residual=0.058177798986434937
-    DEBUG:root:i=227 residual=0.057592201977968216
-    DEBUG:root:i=228 residual=0.05703037232160568
-    DEBUG:root:i=229 residual=0.05647417902946472
-    DEBUG:root:i=230 residual=0.05590782314538956
-    DEBUG:root:i=231 residual=0.05536011978983879
-    DEBUG:root:i=232 residual=0.05481531098484993
-    DEBUG:root:i=233 residual=0.054273467510938644
-    DEBUG:root:i=234 residual=0.05373719334602356
-    DEBUG:root:i=235 residual=0.053214188665151596
-    DEBUG:root:i=236 residual=0.05268106982111931
-    DEBUG:root:i=237 residual=0.05216659605503082
-    DEBUG:root:i=238 residual=0.051647234708070755
-    DEBUG:root:i=239 residual=0.05115426704287529
-    DEBUG:root:i=240 residual=0.050653744488954544
-    DEBUG:root:i=241 residual=0.050156086683273315
-    DEBUG:root:i=242 residual=0.04966137185692787
-    DEBUG:root:i=243 residual=0.04917481914162636
-    DEBUG:root:i=244 residual=0.04868325591087341
-    DEBUG:root:i=245 residual=0.04821036010980606
-    DEBUG:root:i=246 residual=0.047740280628204346
-    DEBUG:root:i=247 residual=0.04727310314774513
-    DEBUG:root:i=248 residual=0.046811364591121674
-    DEBUG:root:i=249 residual=0.04635525122284889
-    DEBUG:root:i=250 residual=0.04589935764670372
-    DEBUG:root:i=251 residual=0.045448921620845795
-    DEBUG:root:i=252 residual=0.045003972947597504
-    DEBUG:root:i=253 residual=0.044567178934812546
-    DEBUG:root:i=254 residual=0.04413323849439621
-    DEBUG:root:i=255 residual=0.04370732232928276
-    DEBUG:root:i=256 residual=0.04326862469315529
-    DEBUG:root:i=257 residual=0.042845916002988815
-    DEBUG:root:i=258 residual=0.042433835566043854
-    DEBUG:root:i=259 residual=0.04201943427324295
-    DEBUG:root:i=260 residual=0.041607875376939774
-    DEBUG:root:i=261 residual=0.04119923710823059
-    DEBUG:root:i=262 residual=0.040793344378471375
-    DEBUG:root:i=263 residual=0.04040345549583435
-    DEBUG:root:i=264 residual=0.040005799382925034
-    DEBUG:root:i=265 residual=0.03961896523833275
-    DEBUG:root:i=266 residual=0.03923233598470688
-    DEBUG:root:i=267 residual=0.03885115683078766
-    DEBUG:root:i=268 residual=0.03847545012831688
-    DEBUG:root:i=269 residual=0.03809206932783127
-    DEBUG:root:i=270 residual=0.037727221846580505
-    DEBUG:root:i=271 residual=0.037354763597249985
-    DEBUG:root:i=272 residual=0.0369928814470768
-    DEBUG:root:i=273 residual=0.036633968353271484
-    DEBUG:root:i=274 residual=0.03627520054578781
-    DEBUG:root:i=275 residual=0.035924483090639114
-    DEBUG:root:i=276 residual=0.03557141497731209
-    DEBUG:root:i=277 residual=0.0352315679192543
-    DEBUG:root:i=278 residual=0.034884076565504074
-    DEBUG:root:i=279 residual=0.03455246239900589
-    DEBUG:root:i=280 residual=0.03421588987112045
-    DEBUG:root:i=281 residual=0.03388207405805588
-    DEBUG:root:i=282 residual=0.03355099633336067
-    DEBUG:root:i=283 residual=0.0332254134118557
-    DEBUG:root:i=284 residual=0.03290001302957535
-    DEBUG:root:i=285 residual=0.032580066472291946
-    DEBUG:root:i=286 residual=0.032257597893476486
-    DEBUG:root:i=287 residual=0.03195631131529808
-    DEBUG:root:i=288 residual=0.03163953870534897
-    DEBUG:root:i=289 residual=0.031328119337558746
-    DEBUG:root:i=290 residual=0.031029947102069855
-    DEBUG:root:i=291 residual=0.030726784840226173
-    DEBUG:root:i=292 residual=0.030434148386120796
-    DEBUG:root:i=293 residual=0.030139081180095673
-    DEBUG:root:i=294 residual=0.02984688989818096
-    DEBUG:root:i=295 residual=0.029554862529039383
-    DEBUG:root:i=296 residual=0.02926819771528244
-    DEBUG:root:i=297 residual=0.02898692525923252
-    DEBUG:root:i=298 residual=0.028703218325972557
-    DEBUG:root:i=299 residual=0.028419705107808113
-    DEBUG:root:i=300 residual=0.028154641389846802
-    DEBUG:root:i=301 residual=0.027876632288098335
-    DEBUG:root:i=302 residual=0.027606643736362457
-    DEBUG:root:i=303 residual=0.02733420580625534
-    DEBUG:root:i=304 residual=0.02706710807979107
-    DEBUG:root:i=305 residual=0.026808029040694237
-    DEBUG:root:i=306 residual=0.026546500623226166
-    DEBUG:root:i=307 residual=0.026287756860256195
-    DEBUG:root:i=308 residual=0.02603701502084732
-    DEBUG:root:i=309 residual=0.025788994506001472
-    DEBUG:root:i=310 residual=0.025530681014060974
-    DEBUG:root:i=311 residual=0.025285614654421806
-    DEBUG:root:i=312 residual=0.025048542767763138
-    DEBUG:root:i=313 residual=0.024798501282930374
-    DEBUG:root:i=314 residual=0.024564316496253014
-    DEBUG:root:i=315 residual=0.024319756776094437
-    DEBUG:root:i=316 residual=0.024091120809316635
-    DEBUG:root:i=317 residual=0.023849427700042725
-    DEBUG:root:i=318 residual=0.023631412535905838
-    DEBUG:root:i=319 residual=0.023400504142045975
-    DEBUG:root:i=320 residual=0.023164520040154457
-    DEBUG:root:i=321 residual=0.022944370284676552
-    DEBUG:root:i=322 residual=0.02272430807352066
-    DEBUG:root:i=323 residual=0.022501802071928978
-    DEBUG:root:i=324 residual=0.02228459343314171
-    DEBUG:root:i=325 residual=0.022067559882998466
-    DEBUG:root:i=326 residual=0.02185589075088501
-    DEBUG:root:i=327 residual=0.021636471152305603
-    DEBUG:root:i=328 residual=0.02142765186727047
-    DEBUG:root:i=329 residual=0.021221613511443138
-    DEBUG:root:i=330 residual=0.02102087251842022
-    DEBUG:root:i=331 residual=0.02082020603120327
-    DEBUG:root:i=332 residual=0.02061186172068119
-    DEBUG:root:i=333 residual=0.02041403204202652
-    DEBUG:root:i=334 residual=0.020224271342158318
-    DEBUG:root:i=335 residual=0.020021509379148483
-    DEBUG:root:i=336 residual=0.019831907004117966
-    DEBUG:root:i=337 residual=0.019639834761619568
-    DEBUG:root:i=338 residual=0.019445279613137245
-    DEBUG:root:i=339 residual=0.01925342157483101
-    DEBUG:root:i=340 residual=0.019077381119132042
-    DEBUG:root:i=341 residual=0.01889096014201641
-    DEBUG:root:i=342 residual=0.01870729960501194
-    DEBUG:root:i=343 residual=0.018531572073698044
-    DEBUG:root:i=344 residual=0.018350720405578613
-    DEBUG:root:i=345 residual=0.01817256212234497
-    DEBUG:root:i=346 residual=0.017986707389354706
-    DEBUG:root:i=347 residual=0.017821842804551125
-    DEBUG:root:i=348 residual=0.01764664240181446
-    DEBUG:root:i=349 residual=0.017479421570897102
-    DEBUG:root:i=350 residual=0.017304304987192154
-    DEBUG:root:i=351 residual=0.01713990420103073
-    DEBUG:root:i=352 residual=0.016983341425657272
-    DEBUG:root:i=353 residual=0.016806073486804962
-    DEBUG:root:i=354 residual=0.016657544299960136
-    DEBUG:root:i=355 residual=0.016490859910845757
-    DEBUG:root:i=356 residual=0.016324302181601524
-    DEBUG:root:i=357 residual=0.016165653243660927
-    DEBUG:root:i=358 residual=0.01601235195994377
-    DEBUG:root:i=359 residual=0.015856513753533363
-    DEBUG:root:i=360 residual=0.015703337267041206
-    DEBUG:root:i=361 residual=0.015552922151982784
-    DEBUG:root:i=362 residual=0.015402541495859623
-    DEBUG:root:i=363 residual=0.015254910103976727
-    DEBUG:root:i=364 residual=0.015115182846784592
-    DEBUG:root:i=365 residual=0.014959911815822124
-    DEBUG:root:i=366 residual=0.014815138652920723
-    DEBUG:root:i=367 residual=0.014667819254100323
-    DEBUG:root:i=368 residual=0.014536282978951931
-    DEBUG:root:i=369 residual=0.014394376426935196
-    DEBUG:root:i=370 residual=0.014249974861741066
-    DEBUG:root:i=371 residual=0.014110774733126163
-    DEBUG:root:i=372 residual=0.013979539275169373
-    DEBUG:root:i=373 residual=0.013845815323293209
-    DEBUG:root:i=374 residual=0.013712153770029545
-    DEBUG:root:i=375 residual=0.013581221923232079
-    DEBUG:root:i=376 residual=0.013447728008031845
-    DEBUG:root:i=377 residual=0.013316883705556393
-    DEBUG:root:i=378 residual=0.013188795186579227
-    DEBUG:root:i=379 residual=0.013065971434116364
-    DEBUG:root:i=380 residual=0.012935367412865162
-    DEBUG:root:i=381 residual=0.012817944400012493
-    DEBUG:root:i=382 residual=0.012684893794357777
-    DEBUG:root:i=383 residual=0.012565015815198421
-    DEBUG:root:i=384 residual=0.012442590668797493
-    DEBUG:root:i=385 residual=0.012320198118686676
-    DEBUG:root:i=386 residual=0.012200548313558102
-    DEBUG:root:i=387 residual=0.012086097151041031
-    DEBUG:root:i=388 residual=0.011974437162280083
-    DEBUG:root:i=389 residual=0.011852297931909561
-    DEBUG:root:i=390 residual=0.011738126166164875
-    DEBUG:root:i=391 residual=0.011626608669757843
-    DEBUG:root:i=392 residual=0.011512580327689648
-    DEBUG:root:i=393 residual=0.011401230469346046
-    DEBUG:root:i=394 residual=0.011295138858258724
-    DEBUG:root:i=395 residual=0.01118393987417221
-    DEBUG:root:i=396 residual=0.011075322516262531
-    DEBUG:root:i=397 residual=0.010969502851366997
-    DEBUG:root:i=398 residual=0.010858351364731789
-    DEBUG:root:i=399 residual=0.010744772851467133
-    DEBUG:root:i=400 residual=0.010652140714228153
-    DEBUG:root:i=401 residual=0.010549110360443592
-    DEBUG:root:i=402 residual=0.010446169413626194
-    DEBUG:root:i=403 residual=0.01034849788993597
-    DEBUG:root:i=404 residual=0.010245653800666332
-    DEBUG:root:i=405 residual=0.010145456530153751
-    DEBUG:root:i=406 residual=0.01004796288907528
-    DEBUG:root:i=407 residual=0.00995053444057703
-    DEBUG:root:i=408 residual=0.009853199124336243
-    DEBUG:root:i=409 residual=0.009758444502949715
-    DEBUG:root:i=410 residual=0.00966380350291729
-    DEBUG:root:i=411 residual=0.009579649195075035
-    DEBUG:root:i=412 residual=0.009479922242462635
-    DEBUG:root:i=413 residual=0.009388073347508907
-    DEBUG:root:i=414 residual=0.009298869408667088
-    DEBUG:root:i=415 residual=0.009201853536069393
-    DEBUG:root:i=416 residual=0.009120575152337551
-    DEBUG:root:i=417 residual=0.009028933010995388
-    DEBUG:root:i=418 residual=0.0089477663859725
-    DEBUG:root:i=419 residual=0.008861429989337921
-    DEBUG:root:i=420 residual=0.008772575296461582
-    DEBUG:root:i=421 residual=0.008686358109116554
-    DEBUG:root:i=422 residual=0.008602805435657501
-    DEBUG:root:i=423 residual=0.008521889336407185
-    DEBUG:root:i=424 residual=0.008435777388513088
-    DEBUG:root:i=425 residual=0.008357622660696507
-    DEBUG:root:i=426 residual=0.008274250663816929
-    DEBUG:root:i=427 residual=0.008196148090064526
-    DEBUG:root:i=428 residual=0.008120684884488583
-    DEBUG:root:i=429 residual=0.008042718283832073
-    DEBUG:root:i=430 residual=0.007964775897562504
-    DEBUG:root:i=431 residual=0.007886863313615322
-    DEBUG:root:i=432 residual=0.007808986585587263
-    DEBUG:root:i=433 residual=0.007736437954008579
-    DEBUG:root:i=434 residual=0.007656065281480551
-    DEBUG:root:i=435 residual=0.007588665932416916
-    DEBUG:root:i=436 residual=0.007513650692999363
-    DEBUG:root:i=437 residual=0.007443833164870739
-    DEBUG:root:i=438 residual=0.007368895690888166
-    DEBUG:root:i=439 residual=0.007296499330550432
-    DEBUG:root:i=440 residual=0.007226826623082161
-    DEBUG:root:i=441 residual=0.007157261949032545
-    DEBUG:root:i=442 residual=0.007085039280354977
-    DEBUG:root:i=443 residual=0.007025976665318012
-    DEBUG:root:i=444 residual=0.006951192393898964
-    DEBUG:root:i=445 residual=0.006886953487992287
-    DEBUG:root:i=446 residual=0.0068149082362651825
-    DEBUG:root:i=447 residual=0.006750788073986769
-    DEBUG:root:i=448 residual=0.00668924767524004
-    DEBUG:root:i=449 residual=0.006619957275688648
-    DEBUG:root:i=450 residual=0.0065611423924565315
-    DEBUG:root:i=451 residual=0.006494518835097551
-    DEBUG:root:i=452 residual=0.00643314840272069
-    DEBUG:root:i=453 residual=0.006371868774294853
-    DEBUG:root:i=454 residual=0.006310612428933382
-    DEBUG:root:i=455 residual=0.006259768269956112
-    DEBUG:root:i=456 residual=0.006182877346873283
-    DEBUG:root:i=457 residual=0.006126986816525459
-    DEBUG:root:i=458 residual=0.0060632298700511456
-    DEBUG:root:i=459 residual=0.006015141028910875
-    DEBUG:root:i=460 residual=0.00595149677246809
-    DEBUG:root:i=461 residual=0.0058930860832333565
-    DEBUG:root:i=462 residual=0.005842545535415411
-    DEBUG:root:i=463 residual=0.005784182343631983
-    DEBUG:root:i=464 residual=0.005725905764847994
-    DEBUG:root:i=465 residual=0.005672812461853027
-    DEBUG:root:i=466 residual=0.005617201328277588
-    DEBUG:root:i=467 residual=0.005566839594393969
-    DEBUG:root:i=468 residual=0.005506038200110197
-    DEBUG:root:i=469 residual=0.005450493656098843
-    DEBUG:root:i=470 residual=0.005402809474617243
-    DEBUG:root:i=471 residual=0.0053499117493629456
-    DEBUG:root:i=472 residual=0.005294496193528175
-    DEBUG:root:i=473 residual=0.00524170184507966
-    DEBUG:root:i=474 residual=0.0051889317110180855
-    DEBUG:root:i=475 residual=0.005146645940840244
-    DEBUG:root:i=476 residual=0.005091311875730753
-    DEBUG:root:i=477 residual=0.005046449601650238
-    DEBUG:root:i=478 residual=0.004991208668798208
-    DEBUG:root:i=479 residual=0.004951626993715763
-    DEBUG:root:i=480 residual=0.004901648499071598
-    DEBUG:root:i=481 residual=0.004856934305280447
-    DEBUG:root:i=482 residual=0.004809620790183544
-    DEBUG:root:i=483 residual=0.0047675506211817265
-    DEBUG:root:i=484 residual=0.004717660136520863
-    DEBUG:root:i=485 residual=0.004667865112423897
-    DEBUG:root:i=486 residual=0.004628448281437159
-    DEBUG:root:i=487 residual=0.004578682594001293
-    DEBUG:root:i=488 residual=0.00453938776627183
-    DEBUG:root:i=489 residual=0.004494888242334127
-    DEBUG:root:i=490 residual=0.004439948592334986
-    DEBUG:root:i=491 residual=0.0044059292413294315
-    DEBUG:root:i=492 residual=0.004361471626907587
-    DEBUG:root:i=493 residual=0.004324869252741337
-    DEBUG:root:i=494 residual=0.004277845844626427
-    DEBUG:root:i=495 residual=0.004241348244249821
-    DEBUG:root:i=496 residual=0.004191796761006117
-    DEBUG:root:i=497 residual=0.004152655601501465
-    DEBUG:root:i=498 residual=0.004113670904189348
-    DEBUG:root:i=499 residual=0.004074627999216318
-    DEBUG:root:i=500 residual=0.004040825646370649
-    DEBUG:root:i=501 residual=0.004001809284090996
-    DEBUG:root:i=502 residual=0.0039628795348107815
-    DEBUG:root:i=503 residual=0.00392128387466073
-    DEBUG:root:i=504 residual=0.003885000478476286
-    DEBUG:root:i=505 residual=0.003840894205495715
-    DEBUG:root:i=506 residual=0.0038098618388175964
-    DEBUG:root:i=507 residual=0.003771010786294937
-    DEBUG:root:i=508 residual=0.0037321695126593113
-    DEBUG:root:i=509 residual=0.003698573913425207
-    DEBUG:root:i=510 residual=0.0036597647704184055
-    DEBUG:root:i=511 residual=0.0036341019440442324
-    DEBUG:root:i=512 residual=0.0035900999791920185
-    DEBUG:root:i=513 residual=0.003561840858310461
-    DEBUG:root:i=514 residual=0.003525776555761695
-    DEBUG:root:i=515 residual=0.0034897068981081247
-    DEBUG:root:i=516 residual=0.0034562856890261173
-    DEBUG:root:i=517 residual=0.003420251654461026
-    DEBUG:root:i=518 residual=0.0033894565422087908
-    DEBUG:root:i=519 residual=0.0033612889237701893
-    DEBUG:root:i=520 residual=0.0033279149793088436
-    DEBUG:root:i=521 residual=0.0032946208957582712
-    DEBUG:root:i=522 residual=0.003256032941862941
-    DEBUG:root:i=523 residual=0.003227989422157407
-    DEBUG:root:i=524 residual=0.0032025743275880814
-    DEBUG:root:i=525 residual=0.00316664413549006
-    DEBUG:root:i=526 residual=0.003138632047921419
-    DEBUG:root:i=527 residual=0.0031080227345228195
-    DEBUG:root:i=528 residual=0.0030852642375975847
-    DEBUG:root:i=529 residual=0.003041611285880208
-    DEBUG:root:i=530 residual=0.003018945222720504
-    DEBUG:root:i=531 residual=0.0029857747722417116
-    DEBUG:root:i=532 residual=0.002963055856525898
-    DEBUG:root:i=533 residual=0.002935195341706276
-    DEBUG:root:i=534 residual=0.002902065869420767
-    DEBUG:root:i=535 residual=0.0028742309659719467
-    DEBUG:root:i=536 residual=0.002851631958037615
-    DEBUG:root:i=537 residual=0.0028133001178503036
-    DEBUG:root:i=538 residual=0.0027959535364061594
-    DEBUG:root:i=539 residual=0.0027681530918926
-    DEBUG:root:i=540 residual=0.002735145390033722
-    DEBUG:root:i=541 residual=0.0027152143884450197
-    DEBUG:root:i=542 residual=0.002682226011529565
-    DEBUG:root:i=543 residual=0.002657166915014386
-    DEBUG:root:i=544 residual=0.002626819768920541
-    DEBUG:root:i=545 residual=0.002612149575725198
-    DEBUG:root:i=546 residual=0.0025897310115396976
-    DEBUG:root:i=547 residual=0.0025620204396545887
-    DEBUG:root:i=548 residual=0.002534387167543173
-    DEBUG:root:i=549 residual=0.002514610765501857
-    DEBUG:root:i=550 residual=0.002489612437784672
-    DEBUG:root:i=551 residual=0.0024593325797468424
-    DEBUG:root:i=552 residual=0.002436965238302946
-    DEBUG:root:i=553 residual=0.002417223295196891
-    DEBUG:root:i=554 residual=0.0023922626860439777
-    DEBUG:root:i=555 residual=0.0023725347127765417
-    DEBUG:root:i=556 residual=0.0023450555745512247
-    DEBUG:root:i=557 residual=0.0023175140377134085
-    DEBUG:root:i=558 residual=0.002295210724696517
-    DEBUG:root:i=559 residual=0.002283346839249134
-    DEBUG:root:i=560 residual=0.002261132700368762
-    DEBUG:root:i=561 residual=0.0022362396121025085
-    DEBUG:root:i=562 residual=0.0022114175371825695
-    DEBUG:root:i=563 residual=0.0021892283111810684
-    DEBUG:root:i=564 residual=0.0021748074796050787
-    DEBUG:root:i=565 residual=0.0021474070381373167
-    DEBUG:root:i=566 residual=0.00212784088216722
-    DEBUG:root:i=567 residual=0.0021056777331978083
-    DEBUG:root:i=568 residual=0.0020939831156283617
-    DEBUG:root:i=569 residual=0.002066599205136299
-    DEBUG:root:i=570 residual=0.0020470779854804277
-    DEBUG:root:i=571 residual=0.002027560956776142
-    DEBUG:root:i=572 residual=0.002015884267166257
-    DEBUG:root:i=573 residual=0.001993768382817507
-    DEBUG:root:i=574 residual=0.001969053875654936
-    DEBUG:root:i=575 residual=0.0019548428244888783
-    DEBUG:root:i=576 residual=0.0019353711977601051
-    DEBUG:root:i=577 residual=0.0019132952438667417
-    DEBUG:root:i=578 residual=0.0018991223769262433
-    DEBUG:root:i=579 residual=0.0018796673975884914
-    DEBUG:root:i=580 residual=0.0018602721393108368
-    DEBUG:root:i=581 residual=0.00184613314922899
-    DEBUG:root:i=582 residual=0.0018240888603031635
-    DEBUG:root:i=583 residual=0.0018021144205704331
-    DEBUG:root:i=584 residual=0.001787981833331287
-    DEBUG:root:i=585 residual=0.001771249109879136
-    DEBUG:root:i=586 residual=0.0017493005143478513
-    DEBUG:root:i=587 residual=0.0017404165118932724
-    DEBUG:root:i=588 residual=0.0017184836324304342
-    DEBUG:root:i=589 residual=0.001707008806988597
-    DEBUG:root:i=590 residual=0.0016850745305418968
-    DEBUG:root:i=591 residual=0.0016709904884919524
-    DEBUG:root:i=592 residual=0.0016569329891353846
-    DEBUG:root:i=593 residual=0.0016324120806530118
-    DEBUG:root:i=594 residual=0.0016262475401163101
-    DEBUG:root:i=595 residual=0.0016095764003694057
-    DEBUG:root:i=596 residual=0.001592915621586144
-    DEBUG:root:i=597 residual=0.0015789364697411656
-    DEBUG:root:i=598 residual=0.0015596701996400952
-    DEBUG:root:i=599 residual=0.0015404914738610387
-    DEBUG:root:i=600 residual=0.0015316938515752554
-    DEBUG:root:i=601 residual=0.0015177438035607338
-    DEBUG:root:i=602 residual=0.001501119346357882
-    DEBUG:root:i=603 residual=0.001489797024987638
-    DEBUG:root:i=604 residual=0.001470640185289085
-    DEBUG:root:i=605 residual=0.0014566422905772924
-    DEBUG:root:i=606 residual=0.0014453398762270808
-    DEBUG:root:i=607 residual=0.00143141346052289
-    DEBUG:root:i=608 residual=0.0014201175654307008
-    DEBUG:root:i=609 residual=0.0014088290045037866
-    DEBUG:root:i=610 residual=0.0013870930997654796
-    DEBUG:root:i=611 residual=0.0013810369418933988
-    DEBUG:root:i=612 residual=0.0013593186158686876
-    DEBUG:root:i=613 residual=0.001353269792161882
-    DEBUG:root:i=614 residual=0.001342000556178391
-    DEBUG:root:i=615 residual=0.0013307473855093122
-    DEBUG:root:i=616 residual=0.0013090457068756223
-    DEBUG:root:i=617 residual=0.001297857379540801
-    DEBUG:root:i=618 residual=0.0012866302859038115
-    DEBUG:root:i=619 residual=0.0012701593805104494
-    DEBUG:root:i=620 residual=0.0012641589855775237
-    DEBUG:root:i=621 residual=0.001247764565050602
-    DEBUG:root:i=622 residual=0.0012417645193636417
-    DEBUG:root:i=623 residual=0.001230615540407598
-    DEBUG:root:i=624 residual=0.0012141801416873932
-    DEBUG:root:i=625 residual=0.001197807607240975
-    DEBUG:root:i=626 residual=0.0011918334057554603
-    DEBUG:root:i=627 residual=0.001180695602670312
-    DEBUG:root:i=628 residual=0.0011747301323339343
-    DEBUG:root:i=629 residual=0.0011636015260592103
-    DEBUG:root:i=630 residual=0.0011472569312900305
-    DEBUG:root:i=631 residual=0.0011308540124446154
-    DEBUG:root:i=632 residual=0.00112496770452708
-    DEBUG:root:i=633 residual=0.001113862032070756
-    DEBUG:root:i=634 residual=0.0011027544969692826
-    DEBUG:root:i=635 residual=0.001091533456929028
-    DEBUG:root:i=636 residual=0.0010856533190235496
-    DEBUG:root:i=637 residual=0.0010745725594460964
-    DEBUG:root:i=638 residual=0.0010634856298565865
-    DEBUG:root:i=639 residual=0.0010524039389565587
-    DEBUG:root:i=640 residual=0.0010361048625782132
-    DEBUG:root:i=641 residual=0.0010302619775757194
-    DEBUG:root:i=642 residual=0.001024420140311122
-    DEBUG:root:i=643 residual=0.00100551953073591
-    DEBUG:root:i=644 residual=0.0009996898006647825
-    DEBUG:root:i=645 residual=0.0009886325569823384
-    DEBUG:root:i=646 residual=0.0009801950072869658
-    DEBUG:root:i=647 residual=0.0009692027815617621
-    DEBUG:root:i=648 residual=0.0009633922600187361
-    DEBUG:root:i=649 residual=0.0009445232572034001
-    DEBUG:root:i=650 residual=0.0009439288987778127
-    DEBUG:root:i=651 residual=0.000932970957364887
-    DEBUG:root:i=652 residual=0.0009219346684403718
-    DEBUG:root:i=653 residual=0.0009161403286270797
-    DEBUG:root:i=654 residual=0.0009104085038416088
-    DEBUG:root:i=655 residual=0.0008993839146569371
-    DEBUG:root:i=656 residual=0.0008883738773874938
-    DEBUG:root:i=657 residual=0.0008878830121830106
-    DEBUG:root:i=658 residual=0.0008664217893965542
-    DEBUG:root:i=659 residual=0.0008633247925899923
-    DEBUG:root:i=660 residual=0.0008549385820515454
-    DEBUG:root:i=661 residual=0.0008544482989236712
-    DEBUG:root:i=662 residual=0.0008382318774238229
-    DEBUG:root:i=663 residual=0.0008325378294102848
-    DEBUG:root:i=664 residual=0.0008268418023362756
-    DEBUG:root:i=665 residual=0.0008132394286803901
-    DEBUG:root:i=666 residual=0.000812772661447525
-    DEBUG:root:i=667 residual=0.0007991936872713268
-    DEBUG:root:i=668 residual=0.0007882857462391257
-    DEBUG:root:i=669 residual=0.0007826011278666556
-    DEBUG:root:i=670 residual=0.0007716994150541723
-    DEBUG:root:i=671 residual=0.000771187013015151
-    DEBUG:root:i=672 residual=0.0007576705538667738
-    DEBUG:root:i=673 residual=0.0007546325796283782
-    DEBUG:root:i=674 residual=0.0007489652489311993
-    DEBUG:root:i=675 residual=0.0007406855002045631
-    DEBUG:root:i=676 residual=0.0007376417052000761
-    DEBUG:root:i=677 residual=0.0007319212891161442
-    DEBUG:root:i=678 residual=0.0007210454787127674
-    DEBUG:root:i=679 residual=0.0007206262671388686
-    DEBUG:root:i=680 residual=0.0006992972339503467
-    DEBUG:root:i=681 residual=0.0006936495774425566
-    DEBUG:root:i=682 residual=0.0006958436570130289
-    DEBUG:root:i=683 residual=0.0006849794881418347
-    DEBUG:root:i=684 residual=0.0006767352460883558
-    DEBUG:root:i=685 residual=0.0006711060414090753
-    DEBUG:root:i=686 residual=0.0006680811056867242
-    DEBUG:root:i=687 residual=0.0006598431500606239
-    DEBUG:root:i=688 residual=0.0006516008288599551
-    DEBUG:root:i=689 residual=0.0006486621568910778
-    DEBUG:root:i=690 residual=0.0006404257728718221
-    DEBUG:root:i=691 residual=0.0006400393322110176
-    DEBUG:root:i=692 residual=0.0006318131927400827
-    DEBUG:root:i=693 residual=0.0006209676503203809
-    DEBUG:root:i=694 residual=0.0006153708673082292
-    DEBUG:root:i=695 residual=0.0006072024698369205
-    DEBUG:root:i=696 residual=0.0006042164750397205
-    DEBUG:root:i=697 residual=0.0006012198864482343
-    DEBUG:root:i=698 residual=0.0005930177867412567
-    DEBUG:root:i=699 residual=0.0005848623695783317
-    DEBUG:root:i=700 residual=0.0005818898207508028
-    DEBUG:root:i=701 residual=0.0005815105978399515
-    DEBUG:root:i=702 residual=0.00056554184993729
-    DEBUG:root:i=703 residual=0.000565173162613064
-    DEBUG:root:i=704 residual=0.000562222907319665
-    DEBUG:root:i=705 residual=0.0005593087989836931
-    DEBUG:root:i=706 residual=0.0005484885186888278
-    DEBUG:root:i=707 residual=0.0005429770681075752
-    DEBUG:root:i=708 residual=0.0005347789847292006
-    DEBUG:root:i=709 residual=0.0005292691639624536
-    DEBUG:root:i=710 residual=0.0005236882134340703
-    DEBUG:root:i=711 residual=0.0005233478732407093
-    DEBUG:root:i=712 residual=0.0005178430583328009
-    DEBUG:root:i=713 residual=0.0005070492625236511
-    DEBUG:root:i=714 residual=0.0005067791789770126
-    DEBUG:root:i=715 residual=0.0005012729670852423
-    DEBUG:root:i=716 residual=0.0005009407759644091
-    DEBUG:root:i=717 residual=0.0004928460693918169
-    DEBUG:root:i=718 residual=0.00048728412366472185
-    DEBUG:root:i=719 residual=0.00048702998901717365
-    DEBUG:root:i=720 residual=0.0004814680723939091
-    DEBUG:root:i=721 residual=0.0004733625100925565
-    DEBUG:root:i=722 residual=0.00047050247667357326
-    DEBUG:root:i=723 residual=0.0004701766883954406
-    DEBUG:root:i=724 residual=0.0004646998131647706
-    DEBUG:root:i=725 residual=0.00045399449300020933
-    DEBUG:root:i=726 residual=0.00044845076627098024
-    DEBUG:root:i=727 residual=0.00044558223453350365
-    DEBUG:root:i=728 residual=0.00044533159234561026
-    DEBUG:root:i=729 residual=0.00044502774835564196
-    DEBUG:root:i=730 residual=0.00042913408833555877
-    DEBUG:root:i=731 residual=0.0004262568545527756
-    DEBUG:root:i=732 residual=0.0004260038258507848
-    DEBUG:root:i=733 residual=0.0004231467901263386
-    DEBUG:root:i=734 residual=0.0004176238435320556
-    DEBUG:root:i=735 residual=0.00041216349927708507
-    DEBUG:root:i=736 residual=0.00041192545904777944
-    DEBUG:root:i=737 residual=0.0004064682580064982
-    DEBUG:root:i=738 residual=0.00040362830623053014
-    DEBUG:root:i=739 residual=0.0003981156332883984
-    DEBUG:root:i=740 residual=0.0003978859167546034
-    DEBUG:root:i=741 residual=0.00038981312536634505
-    DEBUG:root:i=742 residual=0.00038958468940109015
-    DEBUG:root:i=743 residual=0.00038937327917665243
-    DEBUG:root:i=744 residual=0.00037608371349051595
-    DEBUG:root:i=745 residual=0.00037587122642435133
-    DEBUG:root:i=746 residual=0.00037564977537840605
-    DEBUG:root:i=747 residual=0.0003702107351273298
-    DEBUG:root:i=748 residual=0.0003646972472779453
-    DEBUG:root:i=749 residual=0.00035926024429500103
-    DEBUG:root:i=750 residual=0.00035904653486795723
-    DEBUG:root:i=751 residual=0.00035619884147308767
-    DEBUG:root:i=752 residual=0.000348175730323419
-    DEBUG:root:i=753 residual=0.0003479636798147112
-    DEBUG:root:i=754 residual=0.000342532352078706
-    DEBUG:root:i=755 residual=0.00033709185663610697
-    DEBUG:root:i=756 residual=0.00033689613337628543
-    DEBUG:root:i=757 residual=0.0003366899909451604
-    DEBUG:root:i=758 residual=0.0003338618262205273
-    DEBUG:root:i=759 residual=0.00033366723801009357
-    DEBUG:root:i=760 residual=0.00032823573565110564
-    DEBUG:root:i=761 residual=0.0003176545724272728
-    DEBUG:root:i=762 residual=0.00031750183552503586
-    DEBUG:root:i=763 residual=0.00031730683986097574
-    DEBUG:root:i=764 residual=0.00031446630600839853
-    DEBUG:root:i=765 residual=0.00031164687243290246
-    DEBUG:root:i=766 residual=0.00031146174296736717
-    DEBUG:root:i=767 residual=0.00030604249332100153
-    DEBUG:root:i=768 residual=0.0003058497968595475
-    DEBUG:root:i=769 residual=0.00030043761944398284
-    DEBUG:root:i=770 residual=0.0002950914786197245
-    DEBUG:root:i=771 residual=0.00029490888118743896
-    DEBUG:root:i=772 residual=0.00029473091126419604
-    DEBUG:root:i=773 residual=0.0002919361286330968
-    DEBUG:root:i=774 residual=0.00028653210029006004
-    DEBUG:root:i=775 residual=0.00028112667496316135
-    DEBUG:root:i=776 residual=0.00028100941563025117
-    DEBUG:root:i=777 residual=0.0002756061148829758
-    DEBUG:root:i=778 residual=0.00027285877149552107
-    DEBUG:root:i=779 residual=0.00027267917175777256
-    DEBUG:root:i=780 residual=0.00026728137163445354
-    DEBUG:root:i=781 residual=0.0002592992677818984
-    DEBUG:root:i=782 residual=0.00025911678676493466
-    DEBUG:root:i=783 residual=0.000258947053225711
-    DEBUG:root:i=784 residual=0.00025878052110783756
-    DEBUG:root:i=785 residual=0.0002586659393273294
-    DEBUG:root:i=786 residual=0.00025327756884507835
-    DEBUG:root:i=787 residual=0.00025310710771009326
-    DEBUG:root:i=788 residual=0.0002529465709812939
-    DEBUG:root:i=789 residual=0.00024762452812865376
-    DEBUG:root:i=790 residual=0.0002448241284582764
-    DEBUG:root:i=791 residual=0.0002394274197285995
-    DEBUG:root:i=792 residual=0.00023933318152558059
-    DEBUG:root:i=793 residual=0.0002391760644968599
-    DEBUG:root:i=794 residual=0.0002364196552662179
-    DEBUG:root:i=795 residual=0.00023108570894692093
-    DEBUG:root:i=796 residual=0.0002309339033672586
-    DEBUG:root:i=797 residual=0.0002255564759252593
-    DEBUG:root:i=798 residual=0.0002254604478366673
-    DEBUG:root:i=799 residual=0.00022530216665472835
-    DEBUG:root:i=800 residual=0.0002225132193416357
-    DEBUG:root:i=801 residual=0.00022243161220103502
-    DEBUG:root:i=802 residual=0.00022227884619496763
-    DEBUG:root:i=803 residual=0.00021689169807359576
-    DEBUG:root:i=804 residual=0.0002168139471905306
-    DEBUG:root:i=805 residual=0.00021665812528226525
-    DEBUG:root:i=806 residual=0.00020611881336662918
-    DEBUG:root:i=807 residual=0.00020597240654751658
-    DEBUG:root:i=808 residual=0.00020581742865033448
-    DEBUG:root:i=809 residual=0.00020573491929098964
-    DEBUG:root:i=810 residual=0.00020558666437864304
-    DEBUG:root:i=811 residual=0.0002055160002782941
-    DEBUG:root:i=812 residual=0.00019754325330723077
-    DEBUG:root:i=813 residual=0.0001973938924493268
-    DEBUG:root:i=814 residual=0.00019468415121082217
-    DEBUG:root:i=815 residual=0.00019454628636594862
-    DEBUG:root:i=816 residual=0.0001892401633085683
-    DEBUG:root:i=817 residual=0.00018387277668807656
-    DEBUG:root:i=818 residual=0.00017857363855000585
-    DEBUG:root:i=819 residual=0.00017843118985183537
-    DEBUG:root:i=820 residual=0.0001783504558261484
-    DEBUG:root:i=821 residual=0.00017821045184973627
-    DEBUG:root:i=822 residual=0.00017813692102208734
-    DEBUG:root:i=823 residual=0.00017800292698666453
-    DEBUG:root:i=824 residual=0.00017533829668536782
-    DEBUG:root:i=825 residual=0.0001752033131197095
-    DEBUG:root:i=826 residual=0.00017514290811959654
-    DEBUG:root:i=827 residual=0.00016976975894067436
-    DEBUG:root:i=828 residual=0.00016970379510894418
-    DEBUG:root:i=829 residual=0.0001695736573310569
-    DEBUG:root:i=830 residual=0.00016951416910160333
-    DEBUG:root:i=831 residual=0.00016414168931078166
-    DEBUG:root:i=832 residual=0.0001640788250369951
-    DEBUG:root:i=833 residual=0.00016395295097026974
-    DEBUG:root:i=834 residual=0.0001586572325322777
-    DEBUG:root:i=835 residual=0.00015589070972055197
-    DEBUG:root:i=836 residual=0.00015582201012875885
-    DEBUG:root:i=837 residual=0.00015569831884931773
-    DEBUG:root:i=838 residual=0.00015563871420454234
-    DEBUG:root:i=839 residual=0.00014776166062802076
-    DEBUG:root:i=840 residual=0.00014763668878003955
-    DEBUG:root:i=841 residual=0.0001449460833100602
-    DEBUG:root:i=842 residual=0.00014480920799542218
-    DEBUG:root:i=843 residual=0.00014475038915406913
-    DEBUG:root:i=844 residual=0.00014462682884186506
-    DEBUG:root:i=845 residual=0.0001445702073397115
-    DEBUG:root:i=846 residual=0.00014451977040152997
-    DEBUG:root:i=847 residual=0.00014179876598063856
-    DEBUG:root:i=848 residual=0.0001391042460454628
-    DEBUG:root:i=849 residual=0.00014163160813041031
-    DEBUG:root:i=850 residual=0.00014158053090795875
-    DEBUG:root:i=851 residual=0.00013888327521272004
-    DEBUG:root:i=852 residual=0.00014141571591608226
-    DEBUG:root:i=853 residual=0.0001308789651375264
-    DEBUG:root:i=854 residual=0.0001281305158045143
-    DEBUG:root:i=855 residual=0.00012807348684873432
-    DEBUG:root:i=856 residual=0.00012543842603918165
-    DEBUG:root:i=857 residual=0.00012532438267953694
-    DEBUG:root:i=858 residual=0.00012785715807694942
-    DEBUG:root:i=859 residual=0.0001252196088898927
-    DEBUG:root:i=860 residual=0.000125105056213215
-    DEBUG:root:i=861 residual=0.000127651946968399
-    DEBUG:root:i=862 residual=0.00012501463061198592
-    DEBUG:root:i=863 residual=0.00012490163499023765
-    DEBUG:root:i=864 residual=0.00012745500134769827
-    DEBUG:root:i=865 residual=0.0001220994017785415
-    DEBUG:root:i=866 residual=0.0001220526683027856
-    DEBUG:root:i=867 residual=0.00012200928176753223
-    DEBUG:root:i=868 residual=0.00011665656347759068
-    DEBUG:root:i=869 residual=0.0001088062854250893
-    DEBUG:root:i=870 residual=0.00010355197446187958
-    DEBUG:root:i=871 residual=0.00010350728553021327
-    DEBUG:root:i=872 residual=0.00010075206228066236
-    DEBUG:root:i=873 residual=0.00010069773270515725
-    DEBUG:root:i=874 residual=0.00010065300739370286
-    DEBUG:root:i=875 residual=0.00010053361620521173
-    DEBUG:root:i=876 residual=0.00010049295087810606
-    DEBUG:root:i=877 residual=9.524646156933159e-05
-    DEBUG:root:i=878 residual=9.256855264538899e-05
-    DEBUG:root:i=879 residual=9.50862595345825e-05
-    DEBUG:root:i=880 residual=9.248374408343807e-05
-    DEBUG:root:i=881 residual=9.236451296601444e-05
-    DEBUG:root:i=882 residual=9.488729847362265e-05
-    DEBUG:root:i=883 residual=9.228177805198357e-05
-    DEBUG:root:i=884 residual=9.224346285918728e-05
-    DEBUG:root:i=885 residual=9.470312215853482e-05
-    DEBUG:root:i=886 residual=9.209526615450159e-05
-    DEBUG:root:i=887 residual=8.940682164393365e-05
-    DEBUG:root:i=888 residual=8.409584552282467e-05
-    DEBUG:root:i=889 residual=8.15007952041924e-05
-    DEBUG:root:i=890 residual=8.400833758059889e-05
-    DEBUG:root:i=891 residual=8.141924627125263e-05
-    DEBUG:root:i=892 residual=8.130649075610563e-05
-    DEBUG:root:i=893 residual=8.382337546208873e-05
-    DEBUG:root:i=894 residual=8.123216684907675e-05
-    DEBUG:root:i=895 residual=8.119073027046397e-05
-    DEBUG:root:i=896 residual=8.36471444927156e-05
-    DEBUG:root:i=897 residual=8.10506971902214e-05
-    DEBUG:root:i=898 residual=8.100832928903401e-05
-    DEBUG:root:i=899 residual=8.354093006346375e-05
-    DEBUG:root:i=900 residual=8.087034802883863e-05
-    DEBUG:root:i=901 residual=7.818553422112018e-05
-    DEBUG:root:i=902 residual=7.815157005097717e-05
-    DEBUG:root:i=903 residual=7.811703108018264e-05
-    DEBUG:root:i=904 residual=7.801869651302695e-05
-    DEBUG:root:i=905 residual=7.798535807523876e-05
-    DEBUG:root:i=906 residual=7.795669080223888e-05
-    DEBUG:root:i=907 residual=7.792755059199408e-05
-    DEBUG:root:i=908 residual=7.788950460962951e-05
-    DEBUG:root:i=909 residual=7.256964454427361e-05
-    DEBUG:root:i=910 residual=7.519467908423394e-05
-    DEBUG:root:i=911 residual=6.730491440976039e-05
-    DEBUG:root:i=912 residual=6.727161235176027e-05
-    DEBUG:root:i=913 residual=6.71671296004206e-05
-    DEBUG:root:i=914 residual=6.459754513343796e-05
-    DEBUG:root:i=915 residual=5.939921902609058e-05
-    DEBUG:root:i=916 residual=6.189105624798685e-05
-    DEBUG:root:i=917 residual=5.933539796387777e-05
-    DEBUG:root:i=918 residual=5.9222893469268456e-05
-    DEBUG:root:i=919 residual=6.17128680460155e-05
-    DEBUG:root:i=920 residual=5.915097426623106e-05
-    DEBUG:root:i=921 residual=5.912363121751696e-05
-    DEBUG:root:i=922 residual=6.162534555187449e-05
-    DEBUG:root:i=923 residual=5.898941890336573e-05
-    DEBUG:root:i=924 residual=5.8962355979019776e-05
-    DEBUG:root:i=925 residual=6.146875966805965e-05
-    DEBUG:root:i=926 residual=5.890539978281595e-05
-    DEBUG:root:i=927 residual=5.8879148127743974e-05
-    DEBUG:root:i=928 residual=6.13230949966237e-05
-    DEBUG:root:i=929 residual=5.875585338799283e-05
-    DEBUG:root:i=930 residual=5.872713518328965e-05
-    DEBUG:root:i=931 residual=6.124401988927275e-05
-    DEBUG:root:i=932 residual=5.8671936130849645e-05
-    DEBUG:root:i=933 residual=5.598116695182398e-05
-    DEBUG:root:i=934 residual=5.5887281632749364e-05
-    DEBUG:root:i=935 residual=5.586134648183361e-05
-    DEBUG:root:i=936 residual=5.583951497101225e-05
-    DEBUG:root:i=937 residual=5.5813990911701694e-05
-    DEBUG:root:i=938 residual=5.5788932513678446e-05
-    DEBUG:root:i=939 residual=5.57710045541171e-05
-    DEBUG:root:i=940 residual=5.567894913838245e-05
-    DEBUG:root:i=941 residual=5.044707722845487e-05
-    DEBUG:root:i=942 residual=5.309520929586142e-05
-    DEBUG:root:i=943 residual=5.039924872107804e-05
-    DEBUG:root:i=944 residual=5.305057857185602e-05
-    DEBUG:root:i=945 residual=5.3019488404970616e-05
-    DEBUG:root:i=946 residual=5.0257476686965674e-05
-    DEBUG:root:i=947 residual=5.291742490953766e-05
-    DEBUG:root:i=948 residual=5.289345426717773e-05
-    DEBUG:root:i=949 residual=5.019523814553395e-05
-    DEBUG:root:i=950 residual=5.2854735258733854e-05
-    DEBUG:root:i=951 residual=5.283765131025575e-05
-    DEBUG:root:i=952 residual=5.013363261241466e-05
-    DEBUG:root:i=953 residual=5.004648846806958e-05
-    DEBUG:root:i=954 residual=4.2309500713599846e-05
-    DEBUG:root:i=955 residual=4.228300167596899e-05
-    DEBUG:root:i=956 residual=3.959876994485967e-05
-    DEBUG:root:i=957 residual=4.2244355427101254e-05
-    DEBUG:root:i=958 residual=4.222306961310096e-05
-    DEBUG:root:i=959 residual=3.95351235056296e-05
-    DEBUG:root:i=960 residual=4.2103376472368836e-05
-    DEBUG:root:i=961 residual=4.208664540783502e-05
-    DEBUG:root:i=962 residual=3.938942609238438e-05
-    DEBUG:root:i=963 residual=4.204999277135357e-05
-    DEBUG:root:i=964 residual=4.203281787340529e-05
-    DEBUG:root:i=965 residual=3.933028347091749e-05
-    DEBUG:root:i=966 residual=4.20019387092907e-05
-    DEBUG:root:i=967 residual=4.191556217847392e-05
-    DEBUG:root:i=968 residual=3.920289236702956e-05
-    DEBUG:root:i=969 residual=4.1879091440932825e-05
-    DEBUG:root:i=970 residual=4.185948637314141e-05
-    DEBUG:root:i=971 residual=3.915348861482926e-05
-    DEBUG:root:i=972 residual=4.183374403510243e-05
-    DEBUG:root:i=973 residual=4.1815947042778134e-05
-    DEBUG:root:i=974 residual=3.91060093534179e-05
-    DEBUG:root:i=975 residual=4.178366725682281e-05
-    DEBUG:root:i=976 residual=4.170810279902071e-05
-    DEBUG:root:i=977 residual=3.899076546076685e-05
-    DEBUG:root:i=978 residual=4.1678624256746843e-05
-    DEBUG:root:i=979 residual=4.166918733972125e-05
-    DEBUG:root:i=980 residual=3.8940299418754876e-05
-    DEBUG:root:i=981 residual=3.8927264540689066e-05
-    DEBUG:root:i=982 residual=3.6404573620529845e-05
-    DEBUG:root:i=983 residual=3.638631824287586e-05
-    DEBUG:root:i=984 residual=3.360825212439522e-05
-    DEBUG:root:i=985 residual=3.3586333302082494e-05
-    DEBUG:root:i=986 residual=3.3576863643247634e-05
-    DEBUG:root:i=987 residual=3.356036904733628e-05
-    DEBUG:root:i=988 residual=3.354745786054991e-05
-    DEBUG:root:i=989 residual=3.3534193789819255e-05
-    DEBUG:root:i=990 residual=3.351425766595639e-05
-    DEBUG:root:i=991 residual=3.35052827722393e-05
-    DEBUG:root:i=992 residual=3.349375765537843e-05
-    DEBUG:root:i=993 residual=3.3476204407634214e-05
-    DEBUG:root:i=994 residual=3.3410942705813795e-05
-    DEBUG:root:i=995 residual=2.819172186718788e-05
-    DEBUG:root:i=996 residual=3.088849553023465e-05
-    DEBUG:root:i=997 residual=3.087857840000652e-05
-    DEBUG:root:i=998 residual=2.8154685423942283e-05
-    DEBUG:root:i=999 residual=3.08501512336079e-05
-    INFO:root:rank=0 pagerank=5.2386e+01 url=www.lawfareblog.com/lawfare-live-covid-19-speech-and-surveillance
-    INFO:root:rank=1 pagerank=5.2386e+01 url=www.lawfareblog.com/covid-19-speech-and-surveillance-response
-    INFO:root:rank=2 pagerank=7.9439e+00 url=www.lawfareblog.com/cost-using-zero-days
-    INFO:root:rank=3 pagerank=2.3700e+00 url=www.lawfareblog.com/lawfare-podcast-former-congressman-brian-baird-and-daniel-schuman-how-congress-can-continue-function
-    INFO:root:rank=4 pagerank=1.5530e+00 url=www.lawfareblog.com/events
-    INFO:root:rank=5 pagerank=1.1867e+00 url=www.lawfareblog.com/water-wars-increased-us-focus-indo-pacific
-    INFO:root:rank=6 pagerank=1.1867e+00 url=www.lawfareblog.com/water-wars-drill-maybe-drill
-    INFO:root:rank=7 pagerank=1.1867e+00 url=www.lawfareblog.com/water-wars-disjointed-operations-south-china-sea
-    INFO:root:rank=8 pagerank=1.1867e+00 url=www.lawfareblog.com/water-wars-us-china-divide-shangri-la
-    INFO:root:rank=9 pagerank=1.1867e+00 url=www.lawfareblog.com/water-wars-sinking-feeling-philippine-china-relations
-
+   DEBUG:root:computing values
+   DEBUG:root:i=0 residual=6.020053386688232
+   DEBUG:root:i=1 residual=4.125228404998779
+   DEBUG:root:i=2 residual=3.988126039505005
+   DEBUG:root:i=3 residual=3.254075765609741
+   DEBUG:root:i=4 residual=2.479372501373291
+   DEBUG:root:i=5 residual=1.9349404573440552
+   DEBUG:root:i=6 residual=1.6057358980178833
+   DEBUG:root:i=7 residual=1.3929797410964966
+   DEBUG:root:i=8 residual=1.23079514503479
+   DEBUG:root:i=9 residual=1.0955803394317627
+   DEBUG:root:i=10 residual=0.9848985075950623
+   DEBUG:root:i=11 residual=0.9026888608932495
+   DEBUG:root:i=12 residual=0.8521741032600403
+   DEBUG:root:i=13 residual=0.8327345848083496
+   DEBUG:root:i=14 residual=0.8394583463668823
+   DEBUG:root:i=15 residual=0.8648898005485535
+   DEBUG:root:i=16 residual=0.9013580083847046
+   DEBUG:root:i=17 residual=0.9424903988838196
+   DEBUG:root:i=18 residual=0.9836518168449402
+   DEBUG:root:i=19 residual=1.0217764377593994
+   DEBUG:root:i=20 residual=1.0549976825714111
+   DEBUG:root:i=21 residual=1.0823227167129517
+   DEBUG:root:i=22 residual=1.1033583879470825
+   DEBUG:root:i=23 residual=1.1181119680404663
+   DEBUG:root:i=24 residual=1.1268593072891235
+   DEBUG:root:i=25 residual=1.1300342082977295
+   DEBUG:root:i=26 residual=1.1281659603118896
+   DEBUG:root:i=27 residual=1.1218292713165283
+   DEBUG:root:i=28 residual=1.1116008758544922
+   DEBUG:root:i=29 residual=1.0980504751205444
+   DEBUG:root:i=30 residual=1.0817170143127441
+   DEBUG:root:i=31 residual=1.063097596168518
+   DEBUG:root:i=32 residual=1.0426440238952637
+   DEBUG:root:i=33 residual=1.0207661390304565
+   DEBUG:root:i=34 residual=0.9978272318840027
+   DEBUG:root:i=35 residual=0.9741366505622864
+   DEBUG:root:i=36 residual=0.94997239112854
+   DEBUG:root:i=37 residual=0.9255682229995728
+   DEBUG:root:i=38 residual=0.9011223912239075
+   DEBUG:root:i=39 residual=0.8768019080162048
+   DEBUG:root:i=40 residual=0.8527442812919617
+   DEBUG:root:i=41 residual=0.8290591835975647
+   DEBUG:root:i=42 residual=0.805838406085968
+   DEBUG:root:i=43 residual=0.7831514477729797
+   DEBUG:root:i=44 residual=0.761053740978241
+   DEBUG:root:i=45 residual=0.7395858764648438
+   DEBUG:root:i=46 residual=0.718769371509552
+   DEBUG:root:i=47 residual=0.6986252665519714
+   DEBUG:root:i=48 residual=0.6791634559631348
+   DEBUG:root:i=49 residual=0.6603858470916748
+   DEBUG:root:i=50 residual=0.6422803997993469
+   DEBUG:root:i=51 residual=0.6248456835746765
+   DEBUG:root:i=52 residual=0.608067512512207
+   DEBUG:root:i=53 residual=0.5919292569160461
+   DEBUG:root:i=54 residual=0.5764183402061462
+   DEBUG:root:i=55 residual=0.5615025758743286
+   DEBUG:root:i=56 residual=0.5471742153167725
+   DEBUG:root:i=57 residual=0.5334013104438782
+   DEBUG:root:i=58 residual=0.5201760530471802
+   DEBUG:root:i=59 residual=0.5074620842933655
+   DEBUG:root:i=60 residual=0.4952465891838074
+   DEBUG:root:i=61 residual=0.48350346088409424
+   DEBUG:root:i=62 residual=0.47221434116363525
+   DEBUG:root:i=63 residual=0.46136125922203064
+   DEBUG:root:i=64 residual=0.4509163200855255
+   DEBUG:root:i=65 residual=0.44086456298828125
+   DEBUG:root:i=66 residual=0.4311929941177368
+   DEBUG:root:i=67 residual=0.42187267541885376
+   DEBUG:root:i=68 residual=0.41289952397346497
+   DEBUG:root:i=69 residual=0.4042409062385559
+   DEBUG:root:i=70 residual=0.39590081572532654
+   DEBUG:root:i=71 residual=0.38785088062286377
+   DEBUG:root:i=72 residual=0.38007280230522156
+   DEBUG:root:i=73 residual=0.37257376313209534
+   DEBUG:root:i=74 residual=0.3653225600719452
+   DEBUG:root:i=75 residual=0.35831066966056824
+   DEBUG:root:i=76 residual=0.35153451561927795
+   DEBUG:root:i=77 residual=0.3449753224849701
+   DEBUG:root:i=78 residual=0.3386242985725403
+   DEBUG:root:i=79 residual=0.3324729800224304
+   DEBUG:root:i=80 residual=0.326515793800354
+   DEBUG:root:i=81 residual=0.3207334876060486
+   DEBUG:root:i=82 residual=0.3151363432407379
+   DEBUG:root:i=83 residual=0.30969226360321045
+   DEBUG:root:i=84 residual=0.30441662669181824
+   DEBUG:root:i=85 residual=0.2992931008338928
+   DEBUG:root:i=86 residual=0.29430320858955383
+   DEBUG:root:i=87 residual=0.28946200013160706
+   DEBUG:root:i=88 residual=0.28475886583328247
+   DEBUG:root:i=89 residual=0.28018298745155334
+   DEBUG:root:i=90 residual=0.27571290731430054
+   DEBUG:root:i=91 residual=0.27137741446495056
+   DEBUG:root:i=92 residual=0.2671445906162262
+   DEBUG:root:i=93 residual=0.26302728056907654
+   DEBUG:root:i=94 residual=0.25900697708129883
+   DEBUG:root:i=95 residual=0.255094051361084
+   DEBUG:root:i=96 residual=0.2512669563293457
+   DEBUG:root:i=97 residual=0.24754944443702698
+   DEBUG:root:i=98 residual=0.24391236901283264
+   DEBUG:root:i=99 residual=0.24036064743995667
+   DEBUG:root:i=100 residual=0.23689422011375427
+   DEBUG:root:i=101 residual=0.23350247740745544
+   DEBUG:root:i=102 residual=0.23018257319927216
+   DEBUG:root:i=103 residual=0.22694484889507294
+   DEBUG:root:i=104 residual=0.22378401458263397
+   DEBUG:root:i=105 residual=0.2206839919090271
+   DEBUG:root:i=106 residual=0.217647522687912
+   DEBUG:root:i=107 residual=0.214679554104805
+   DEBUG:root:i=108 residual=0.21177227795124054
+   DEBUG:root:i=109 residual=0.2089359164237976
+   DEBUG:root:i=110 residual=0.2061467468738556
+   DEBUG:root:i=111 residual=0.2034100592136383
+   DEBUG:root:i=112 residual=0.20074409246444702
+   DEBUG:root:i=113 residual=0.19812509417533875
+   DEBUG:root:i=114 residual=0.1955476999282837
+   DEBUG:root:i=115 residual=0.19302237033843994
+   DEBUG:root:i=116 residual=0.1905543953180313
+   DEBUG:root:i=117 residual=0.18812517821788788
+   DEBUG:root:i=118 residual=0.18575048446655273
+   DEBUG:root:i=119 residual=0.1834143102169037
+   DEBUG:root:i=120 residual=0.18111693859100342
+   DEBUG:root:i=121 residual=0.17886587977409363
+   DEBUG:root:i=122 residual=0.17665325105190277
+   DEBUG:root:i=123 residual=0.17448176443576813
+   DEBUG:root:i=124 residual=0.17234870791435242
+   DEBUG:root:i=125 residual=0.17025652527809143
+   DEBUG:root:i=126 residual=0.1681869477033615
+   DEBUG:root:i=127 residual=0.16616344451904297
+   DEBUG:root:i=128 residual=0.16416776180267334
+   DEBUG:root:i=129 residual=0.16221541166305542
+   DEBUG:root:i=130 residual=0.16028283536434174
+   DEBUG:root:i=131 residual=0.15840156376361847
+   DEBUG:root:i=132 residual=0.15653198957443237
+   DEBUG:root:i=133 residual=0.15469783544540405
+   DEBUG:root:i=134 residual=0.15289373695850372
+   DEBUG:root:i=135 residual=0.15112243592739105
+   DEBUG:root:i=136 residual=0.14937590062618256
+   DEBUG:root:i=137 residual=0.1476515382528305
+   DEBUG:root:i=138 residual=0.14595195651054382
+   DEBUG:root:i=139 residual=0.14429275691509247
+   DEBUG:root:i=140 residual=0.14264778792858124
+   DEBUG:root:i=141 residual=0.1410222202539444
+   DEBUG:root:i=142 residual=0.13943710923194885
+   DEBUG:root:i=143 residual=0.13786353170871735
+   DEBUG:root:i=144 residual=0.13631178438663483
+   DEBUG:root:i=145 residual=0.1347847431898117
+   DEBUG:root:i=146 residual=0.1332874447107315
+   DEBUG:root:i=147 residual=0.13180945813655853
+   DEBUG:root:i=148 residual=0.13034816086292267
+   DEBUG:root:i=149 residual=0.12891128659248352
+   DEBUG:root:i=150 residual=0.12748321890830994
+   DEBUG:root:i=151 residual=0.12608490884304047
+   DEBUG:root:i=152 residual=0.12471350282430649
+   DEBUG:root:i=153 residual=0.12335357815027237
+   DEBUG:root:i=154 residual=0.12200227379798889
+   DEBUG:root:i=155 residual=0.12068578600883484
+   DEBUG:root:i=156 residual=0.11937283724546432
+   DEBUG:root:i=157 residual=0.11808948218822479
+   DEBUG:root:i=158 residual=0.11681470274925232
+   DEBUG:root:i=159 residual=0.11555910855531693
+   DEBUG:root:i=160 residual=0.11431993544101715
+   DEBUG:root:i=161 residual=0.11309979856014252
+   DEBUG:root:i=162 residual=0.11189102381467819
+   DEBUG:root:i=163 residual=0.11069595068693161
+   DEBUG:root:i=164 residual=0.10952246189117432
+   DEBUG:root:i=165 residual=0.1083628311753273
+   DEBUG:root:i=166 residual=0.1072196289896965
+   DEBUG:root:i=167 residual=0.10609535872936249
+   DEBUG:root:i=168 residual=0.1049744114279747
+   DEBUG:root:i=169 residual=0.10386469215154648
+   DEBUG:root:i=170 residual=0.10277910530567169
+   DEBUG:root:i=171 residual=0.10169932246208191
+   DEBUG:root:i=172 residual=0.10064121335744858
+   DEBUG:root:i=173 residual=0.09958630800247192
+   DEBUG:root:i=174 residual=0.09855028241872787
+   DEBUG:root:i=175 residual=0.09752540290355682
+   DEBUG:root:i=176 residual=0.09651423990726471
+   DEBUG:root:i=177 residual=0.09551148116588593
+   DEBUG:root:i=178 residual=0.09452755004167557
+   DEBUG:root:i=179 residual=0.09355219453573227
+   DEBUG:root:i=180 residual=0.0925825759768486
+   DEBUG:root:i=181 residual=0.09163172543048859
+   DEBUG:root:i=182 residual=0.0906919613480568
+   DEBUG:root:i=183 residual=0.08976326882839203
+   DEBUG:root:i=184 residual=0.08884299546480179
+   DEBUG:root:i=185 residual=0.08792313933372498
+   DEBUG:root:i=186 residual=0.08703263103961945
+   DEBUG:root:i=187 residual=0.08613483607769012
+   DEBUG:root:i=188 residual=0.08525849133729935
+   DEBUG:root:i=189 residual=0.08439303934574127
+   DEBUG:root:i=190 residual=0.08353336155414581
+   DEBUG:root:i=191 residual=0.08268730342388153
+   DEBUG:root:i=192 residual=0.08184432238340378
+   DEBUG:root:i=193 residual=0.08101481944322586
+   DEBUG:root:i=194 residual=0.08020158112049103
+   DEBUG:root:i=195 residual=0.07939145714044571
+   DEBUG:root:i=196 residual=0.07858704775571823
+   DEBUG:root:i=197 residual=0.07779349386692047
+   DEBUG:root:i=198 residual=0.07701084017753601
+   DEBUG:root:i=199 residual=0.07622608542442322
+   DEBUG:root:i=200 residual=0.07546007633209229
+   DEBUG:root:i=201 residual=0.07469969987869263
+   DEBUG:root:i=202 residual=0.07395804673433304
+   DEBUG:root:i=203 residual=0.07321169227361679
+   DEBUG:root:i=204 residual=0.07248401641845703
+   DEBUG:root:i=205 residual=0.07175420224666595
+   DEBUG:root:i=206 residual=0.07103002071380615
+   DEBUG:root:i=207 residual=0.07032182067632675
+   DEBUG:root:i=208 residual=0.06961940973997116
+   DEBUG:root:i=209 residual=0.0689251646399498
+   DEBUG:root:i=210 residual=0.06824183464050293
+   DEBUG:root:i=211 residual=0.06756409257650375
+   DEBUG:root:i=212 residual=0.06688674539327621
+   DEBUG:root:i=213 residual=0.06622288376092911
+   DEBUG:root:i=214 residual=0.06555677950382233
+   DEBUG:root:i=215 residual=0.06490153819322586
+   DEBUG:root:i=216 residual=0.06425447016954422
+   DEBUG:root:i=217 residual=0.0636182352900505
+   DEBUG:root:i=218 residual=0.06299024075269699
+   DEBUG:root:i=219 residual=0.06235998496413231
+   DEBUG:root:i=220 residual=0.061751026660203934
+   DEBUG:root:i=221 residual=0.061142463237047195
+   DEBUG:root:i=222 residual=0.06053679808974266
+   DEBUG:root:i=223 residual=0.059931445866823196
+   DEBUG:root:i=224 residual=0.05933959037065506
+   DEBUG:root:i=225 residual=0.05875328183174133
+   DEBUG:root:i=226 residual=0.058177798986434937
+   DEBUG:root:i=227 residual=0.057592201977968216
+   DEBUG:root:i=228 residual=0.05703037232160568
+   DEBUG:root:i=229 residual=0.05647417902946472
+   DEBUG:root:i=230 residual=0.05590782314538956
+   DEBUG:root:i=231 residual=0.05536011978983879
+   DEBUG:root:i=232 residual=0.05481531098484993
+   DEBUG:root:i=233 residual=0.054273467510938644
+   DEBUG:root:i=234 residual=0.05373719334602356
+   DEBUG:root:i=235 residual=0.053214188665151596
+   DEBUG:root:i=236 residual=0.05268106982111931
+   DEBUG:root:i=237 residual=0.05216659605503082
+   DEBUG:root:i=238 residual=0.051647234708070755
+   DEBUG:root:i=239 residual=0.05115426704287529
+   DEBUG:root:i=240 residual=0.050653744488954544
+   DEBUG:root:i=241 residual=0.050156086683273315
+   DEBUG:root:i=242 residual=0.04966137185692787
+   DEBUG:root:i=243 residual=0.04917481914162636
+   DEBUG:root:i=244 residual=0.04868325591087341
+   DEBUG:root:i=245 residual=0.04821036010980606
+   DEBUG:root:i=246 residual=0.047740280628204346
+   DEBUG:root:i=247 residual=0.04727310314774513
+   DEBUG:root:i=248 residual=0.046811364591121674
+   DEBUG:root:i=249 residual=0.04635525122284889
+   DEBUG:root:i=250 residual=0.04589935764670372
+   DEBUG:root:i=251 residual=0.045448921620845795
+   DEBUG:root:i=252 residual=0.045003972947597504
+   DEBUG:root:i=253 residual=0.044567178934812546
+   DEBUG:root:i=254 residual=0.04413323849439621
+   DEBUG:root:i=255 residual=0.04370732232928276
+   DEBUG:root:i=256 residual=0.04326862469315529
+   DEBUG:root:i=257 residual=0.042845916002988815
+   DEBUG:root:i=258 residual=0.042433835566043854
+   DEBUG:root:i=259 residual=0.04201943427324295
+   DEBUG:root:i=260 residual=0.041607875376939774
+   DEBUG:root:i=261 residual=0.04119923710823059
+   DEBUG:root:i=262 residual=0.040793344378471375
+   DEBUG:root:i=263 residual=0.04040345549583435
+   DEBUG:root:i=264 residual=0.040005799382925034
+   DEBUG:root:i=265 residual=0.03961896523833275
+   DEBUG:root:i=266 residual=0.03923233598470688
+   DEBUG:root:i=267 residual=0.03885115683078766
+   DEBUG:root:i=268 residual=0.03847545012831688
+   DEBUG:root:i=269 residual=0.03809206932783127
+   DEBUG:root:i=270 residual=0.037727221846580505
+   DEBUG:root:i=271 residual=0.037354763597249985
+   DEBUG:root:i=272 residual=0.0369928814470768
+   DEBUG:root:i=273 residual=0.036633968353271484
+   DEBUG:root:i=274 residual=0.03627520054578781
+   DEBUG:root:i=275 residual=0.035924483090639114
+   DEBUG:root:i=276 residual=0.03557141497731209
+   DEBUG:root:i=277 residual=0.0352315679192543
+   DEBUG:root:i=278 residual=0.034884076565504074
+   DEBUG:root:i=279 residual=0.03455246239900589
+   DEBUG:root:i=280 residual=0.03421588987112045
+   DEBUG:root:i=281 residual=0.03388207405805588
+   DEBUG:root:i=282 residual=0.03355099633336067
+   DEBUG:root:i=283 residual=0.0332254134118557
+   DEBUG:root:i=284 residual=0.03290001302957535
+   DEBUG:root:i=285 residual=0.032580066472291946
+   DEBUG:root:i=286 residual=0.032257597893476486
+   DEBUG:root:i=287 residual=0.03195631131529808
+   DEBUG:root:i=288 residual=0.03163953870534897
+   DEBUG:root:i=289 residual=0.031328119337558746
+   DEBUG:root:i=290 residual=0.031029947102069855
+   DEBUG:root:i=291 residual=0.030726784840226173
+   DEBUG:root:i=292 residual=0.030434148386120796
+   DEBUG:root:i=293 residual=0.030139081180095673
+   DEBUG:root:i=294 residual=0.02984688989818096
+   DEBUG:root:i=295 residual=0.029554862529039383
+   DEBUG:root:i=296 residual=0.02926819771528244
+   DEBUG:root:i=297 residual=0.02898692525923252
+   DEBUG:root:i=298 residual=0.028703218325972557
+   DEBUG:root:i=299 residual=0.028419705107808113
+   DEBUG:root:i=300 residual=0.028154641389846802
+   DEBUG:root:i=301 residual=0.027876632288098335
+   DEBUG:root:i=302 residual=0.027606643736362457
+   DEBUG:root:i=303 residual=0.02733420580625534
+   DEBUG:root:i=304 residual=0.02706710807979107
+   DEBUG:root:i=305 residual=0.026808029040694237
+   DEBUG:root:i=306 residual=0.026546500623226166
+   DEBUG:root:i=307 residual=0.026287756860256195
+   DEBUG:root:i=308 residual=0.02603701502084732
+   DEBUG:root:i=309 residual=0.025788994506001472
+   DEBUG:root:i=310 residual=0.025530681014060974
+   DEBUG:root:i=311 residual=0.025285614654421806
+   DEBUG:root:i=312 residual=0.025048542767763138
+   DEBUG:root:i=313 residual=0.024798501282930374
+   DEBUG:root:i=314 residual=0.024564316496253014
+   DEBUG:root:i=315 residual=0.024319756776094437
+   DEBUG:root:i=316 residual=0.024091120809316635
+   DEBUG:root:i=317 residual=0.023849427700042725
+   DEBUG:root:i=318 residual=0.023631412535905838
+   DEBUG:root:i=319 residual=0.023400504142045975
+   DEBUG:root:i=320 residual=0.023164520040154457
+   DEBUG:root:i=321 residual=0.022944370284676552
+   DEBUG:root:i=322 residual=0.02272430807352066
+   DEBUG:root:i=323 residual=0.022501802071928978
+   DEBUG:root:i=324 residual=0.02228459343314171
+   DEBUG:root:i=325 residual=0.022067559882998466
+   DEBUG:root:i=326 residual=0.02185589075088501
+   DEBUG:root:i=327 residual=0.021636471152305603
+   DEBUG:root:i=328 residual=0.02142765186727047
+   DEBUG:root:i=329 residual=0.021221613511443138
+   DEBUG:root:i=330 residual=0.02102087251842022
+   DEBUG:root:i=331 residual=0.02082020603120327
+   DEBUG:root:i=332 residual=0.02061186172068119
+   DEBUG:root:i=333 residual=0.02041403204202652
+   DEBUG:root:i=334 residual=0.020224271342158318
+   DEBUG:root:i=335 residual=0.020021509379148483
+   DEBUG:root:i=336 residual=0.019831907004117966
+   DEBUG:root:i=337 residual=0.019639834761619568
+   DEBUG:root:i=338 residual=0.019445279613137245
+   DEBUG:root:i=339 residual=0.01925342157483101
+   DEBUG:root:i=340 residual=0.019077381119132042
+   DEBUG:root:i=341 residual=0.01889096014201641
+   DEBUG:root:i=342 residual=0.01870729960501194
+   DEBUG:root:i=343 residual=0.018531572073698044
+   DEBUG:root:i=344 residual=0.018350720405578613
+   DEBUG:root:i=345 residual=0.01817256212234497
+   DEBUG:root:i=346 residual=0.017986707389354706
+   DEBUG:root:i=347 residual=0.017821842804551125
+   DEBUG:root:i=348 residual=0.01764664240181446
+   DEBUG:root:i=349 residual=0.017479421570897102
+   DEBUG:root:i=350 residual=0.017304304987192154
+   DEBUG:root:i=351 residual=0.01713990420103073
+   DEBUG:root:i=352 residual=0.016983341425657272
+   DEBUG:root:i=353 residual=0.016806073486804962
+   DEBUG:root:i=354 residual=0.016657544299960136
+   DEBUG:root:i=355 residual=0.016490859910845757
+   DEBUG:root:i=356 residual=0.016324302181601524
+   DEBUG:root:i=357 residual=0.016165653243660927
+   DEBUG:root:i=358 residual=0.01601235195994377
+   DEBUG:root:i=359 residual=0.015856513753533363
+   DEBUG:root:i=360 residual=0.015703337267041206
+   DEBUG:root:i=361 residual=0.015552922151982784
+   DEBUG:root:i=362 residual=0.015402541495859623
+   DEBUG:root:i=363 residual=0.015254910103976727
+   DEBUG:root:i=364 residual=0.015115182846784592
+   DEBUG:root:i=365 residual=0.014959911815822124
+   DEBUG:root:i=366 residual=0.014815138652920723
+   DEBUG:root:i=367 residual=0.014667819254100323
+   DEBUG:root:i=368 residual=0.014536282978951931
+   DEBUG:root:i=369 residual=0.014394376426935196
+   DEBUG:root:i=370 residual=0.014249974861741066
+   DEBUG:root:i=371 residual=0.014110774733126163
+   DEBUG:root:i=372 residual=0.013979539275169373
+   DEBUG:root:i=373 residual=0.013845815323293209
+   DEBUG:root:i=374 residual=0.013712153770029545
+   DEBUG:root:i=375 residual=0.013581221923232079
+   DEBUG:root:i=376 residual=0.013447728008031845
+   DEBUG:root:i=377 residual=0.013316883705556393
+   DEBUG:root:i=378 residual=0.013188795186579227
+   DEBUG:root:i=379 residual=0.013065971434116364
+   DEBUG:root:i=380 residual=0.012935367412865162
+   DEBUG:root:i=381 residual=0.012817944400012493
+   DEBUG:root:i=382 residual=0.012684893794357777
+   DEBUG:root:i=383 residual=0.012565015815198421
+   DEBUG:root:i=384 residual=0.012442590668797493
+   DEBUG:root:i=385 residual=0.012320198118686676
+   DEBUG:root:i=386 residual=0.012200548313558102
+   DEBUG:root:i=387 residual=0.012086097151041031
+   DEBUG:root:i=388 residual=0.011974437162280083
+   DEBUG:root:i=389 residual=0.011852297931909561
+   DEBUG:root:i=390 residual=0.011738126166164875
+   DEBUG:root:i=391 residual=0.011626608669757843
+   DEBUG:root:i=392 residual=0.011512580327689648
+   DEBUG:root:i=393 residual=0.011401230469346046
+   DEBUG:root:i=394 residual=0.011295138858258724
+   DEBUG:root:i=395 residual=0.01118393987417221
+   DEBUG:root:i=396 residual=0.011075322516262531
+   DEBUG:root:i=397 residual=0.010969502851366997
+   DEBUG:root:i=398 residual=0.010858351364731789
+   DEBUG:root:i=399 residual=0.010744772851467133
+   DEBUG:root:i=400 residual=0.010652140714228153
+   DEBUG:root:i=401 residual=0.010549110360443592
+   DEBUG:root:i=402 residual=0.010446169413626194
+   DEBUG:root:i=403 residual=0.01034849788993597
+   DEBUG:root:i=404 residual=0.010245653800666332
+   DEBUG:root:i=405 residual=0.010145456530153751
+   DEBUG:root:i=406 residual=0.01004796288907528
+   DEBUG:root:i=407 residual=0.00995053444057703
+   DEBUG:root:i=408 residual=0.009853199124336243
+   DEBUG:root:i=409 residual=0.009758444502949715
+   DEBUG:root:i=410 residual=0.00966380350291729
+   DEBUG:root:i=411 residual=0.009579649195075035
+   DEBUG:root:i=412 residual=0.009479922242462635
+   DEBUG:root:i=413 residual=0.009388073347508907
+   DEBUG:root:i=414 residual=0.009298869408667088
+   DEBUG:root:i=415 residual=0.009201853536069393
+   DEBUG:root:i=416 residual=0.009120575152337551
+   DEBUG:root:i=417 residual=0.009028933010995388
+   DEBUG:root:i=418 residual=0.0089477663859725
+   DEBUG:root:i=419 residual=0.008861429989337921
+   DEBUG:root:i=420 residual=0.008772575296461582
+   DEBUG:root:i=421 residual=0.008686358109116554
+   DEBUG:root:i=422 residual=0.008602805435657501
+   DEBUG:root:i=423 residual=0.008521889336407185
+   DEBUG:root:i=424 residual=0.008435777388513088
+   DEBUG:root:i=425 residual=0.008357622660696507
+   DEBUG:root:i=426 residual=0.008274250663816929
+   DEBUG:root:i=427 residual=0.008196148090064526
+   DEBUG:root:i=428 residual=0.008120684884488583
+   DEBUG:root:i=429 residual=0.008042718283832073
+   DEBUG:root:i=430 residual=0.007964775897562504
+   DEBUG:root:i=431 residual=0.007886863313615322
+   DEBUG:root:i=432 residual=0.007808986585587263
+   DEBUG:root:i=433 residual=0.007736437954008579
+   DEBUG:root:i=434 residual=0.007656065281480551
+   DEBUG:root:i=435 residual=0.007588665932416916
+   DEBUG:root:i=436 residual=0.007513650692999363
+   DEBUG:root:i=437 residual=0.007443833164870739
+   DEBUG:root:i=438 residual=0.007368895690888166
+   DEBUG:root:i=439 residual=0.007296499330550432
+   DEBUG:root:i=440 residual=0.007226826623082161
+   DEBUG:root:i=441 residual=0.007157261949032545
+   DEBUG:root:i=442 residual=0.007085039280354977
+   DEBUG:root:i=443 residual=0.007025976665318012
+   DEBUG:root:i=444 residual=0.006951192393898964
+   DEBUG:root:i=445 residual=0.006886953487992287
+   DEBUG:root:i=446 residual=0.0068149082362651825
+   DEBUG:root:i=447 residual=0.006750788073986769
+   DEBUG:root:i=448 residual=0.00668924767524004
+   DEBUG:root:i=449 residual=0.006619957275688648
+   DEBUG:root:i=450 residual=0.0065611423924565315
+   DEBUG:root:i=451 residual=0.006494518835097551
+   DEBUG:root:i=452 residual=0.00643314840272069
+   DEBUG:root:i=453 residual=0.006371868774294853
+   DEBUG:root:i=454 residual=0.006310612428933382
+   DEBUG:root:i=455 residual=0.006259768269956112
+   DEBUG:root:i=456 residual=0.006182877346873283
+   DEBUG:root:i=457 residual=0.006126986816525459
+   DEBUG:root:i=458 residual=0.0060632298700511456
+   DEBUG:root:i=459 residual=0.006015141028910875
+   DEBUG:root:i=460 residual=0.00595149677246809
+   DEBUG:root:i=461 residual=0.0058930860832333565
+   DEBUG:root:i=462 residual=0.005842545535415411
+   DEBUG:root:i=463 residual=0.005784182343631983
+   DEBUG:root:i=464 residual=0.005725905764847994
+   DEBUG:root:i=465 residual=0.005672812461853027
+   DEBUG:root:i=466 residual=0.005617201328277588
+   DEBUG:root:i=467 residual=0.005566839594393969
+   DEBUG:root:i=468 residual=0.005506038200110197
+   DEBUG:root:i=469 residual=0.005450493656098843
+   DEBUG:root:i=470 residual=0.005402809474617243
+   DEBUG:root:i=471 residual=0.0053499117493629456
+   DEBUG:root:i=472 residual=0.005294496193528175
+   DEBUG:root:i=473 residual=0.00524170184507966
+   DEBUG:root:i=474 residual=0.0051889317110180855
+   DEBUG:root:i=475 residual=0.005146645940840244
+   DEBUG:root:i=476 residual=0.005091311875730753
+   DEBUG:root:i=477 residual=0.005046449601650238
+   DEBUG:root:i=478 residual=0.004991208668798208
+   DEBUG:root:i=479 residual=0.004951626993715763
+   DEBUG:root:i=480 residual=0.004901648499071598
+   DEBUG:root:i=481 residual=0.004856934305280447
+   DEBUG:root:i=482 residual=0.004809620790183544
+   DEBUG:root:i=483 residual=0.0047675506211817265
+   DEBUG:root:i=484 residual=0.004717660136520863
+   DEBUG:root:i=485 residual=0.004667865112423897
+   DEBUG:root:i=486 residual=0.004628448281437159
+   DEBUG:root:i=487 residual=0.004578682594001293
+   DEBUG:root:i=488 residual=0.00453938776627183
+   DEBUG:root:i=489 residual=0.004494888242334127
+   DEBUG:root:i=490 residual=0.004439948592334986
+   DEBUG:root:i=491 residual=0.0044059292413294315
+   DEBUG:root:i=492 residual=0.004361471626907587
+   DEBUG:root:i=493 residual=0.004324869252741337
+   DEBUG:root:i=494 residual=0.004277845844626427
+   DEBUG:root:i=495 residual=0.004241348244249821
+   DEBUG:root:i=496 residual=0.004191796761006117
+   DEBUG:root:i=497 residual=0.004152655601501465
+   DEBUG:root:i=498 residual=0.004113670904189348
+   DEBUG:root:i=499 residual=0.004074627999216318
+   DEBUG:root:i=500 residual=0.004040825646370649
+   DEBUG:root:i=501 residual=0.004001809284090996
+   DEBUG:root:i=502 residual=0.0039628795348107815
+   DEBUG:root:i=503 residual=0.00392128387466073
+   DEBUG:root:i=504 residual=0.003885000478476286
+   DEBUG:root:i=505 residual=0.003840894205495715
+   DEBUG:root:i=506 residual=0.0038098618388175964
+   DEBUG:root:i=507 residual=0.003771010786294937
+   DEBUG:root:i=508 residual=0.0037321695126593113
+   DEBUG:root:i=509 residual=0.003698573913425207
+   DEBUG:root:i=510 residual=0.0036597647704184055
+   DEBUG:root:i=511 residual=0.0036341019440442324
+   DEBUG:root:i=512 residual=0.0035900999791920185
+   DEBUG:root:i=513 residual=0.003561840858310461
+   DEBUG:root:i=514 residual=0.003525776555761695
+   DEBUG:root:i=515 residual=0.0034897068981081247
+   DEBUG:root:i=516 residual=0.0034562856890261173
+   DEBUG:root:i=517 residual=0.003420251654461026
+   DEBUG:root:i=518 residual=0.0033894565422087908
+   DEBUG:root:i=519 residual=0.0033612889237701893
+   DEBUG:root:i=520 residual=0.0033279149793088436
+   DEBUG:root:i=521 residual=0.0032946208957582712
+   DEBUG:root:i=522 residual=0.003256032941862941
+   DEBUG:root:i=523 residual=0.003227989422157407
+   DEBUG:root:i=524 residual=0.0032025743275880814
+   DEBUG:root:i=525 residual=0.00316664413549006
+   DEBUG:root:i=526 residual=0.003138632047921419
+   DEBUG:root:i=527 residual=0.0031080227345228195
+   DEBUG:root:i=528 residual=0.0030852642375975847
+   DEBUG:root:i=529 residual=0.003041611285880208
+   DEBUG:root:i=530 residual=0.003018945222720504
+   DEBUG:root:i=531 residual=0.0029857747722417116
+   DEBUG:root:i=532 residual=0.002963055856525898
+   DEBUG:root:i=533 residual=0.002935195341706276
+   DEBUG:root:i=534 residual=0.002902065869420767
+   DEBUG:root:i=535 residual=0.0028742309659719467
+   DEBUG:root:i=536 residual=0.002851631958037615
+   DEBUG:root:i=537 residual=0.0028133001178503036
+   DEBUG:root:i=538 residual=0.0027959535364061594
+   DEBUG:root:i=539 residual=0.0027681530918926
+   DEBUG:root:i=540 residual=0.002735145390033722
+   DEBUG:root:i=541 residual=0.0027152143884450197
+   DEBUG:root:i=542 residual=0.002682226011529565
+   DEBUG:root:i=543 residual=0.002657166915014386
+   DEBUG:root:i=544 residual=0.002626819768920541
+   DEBUG:root:i=545 residual=0.002612149575725198
+   DEBUG:root:i=546 residual=0.0025897310115396976
+   DEBUG:root:i=547 residual=0.0025620204396545887
+   DEBUG:root:i=548 residual=0.002534387167543173
+   DEBUG:root:i=549 residual=0.002514610765501857
+   DEBUG:root:i=550 residual=0.002489612437784672
+   DEBUG:root:i=551 residual=0.0024593325797468424
+   DEBUG:root:i=552 residual=0.002436965238302946
+   DEBUG:root:i=553 residual=0.002417223295196891
+   DEBUG:root:i=554 residual=0.0023922626860439777
+   DEBUG:root:i=555 residual=0.0023725347127765417
+   DEBUG:root:i=556 residual=0.0023450555745512247
+   DEBUG:root:i=557 residual=0.0023175140377134085
+   DEBUG:root:i=558 residual=0.002295210724696517
+   DEBUG:root:i=559 residual=0.002283346839249134
+   DEBUG:root:i=560 residual=0.002261132700368762
+   DEBUG:root:i=561 residual=0.0022362396121025085
+   DEBUG:root:i=562 residual=0.0022114175371825695
+   DEBUG:root:i=563 residual=0.0021892283111810684
+   DEBUG:root:i=564 residual=0.0021748074796050787
+   DEBUG:root:i=565 residual=0.0021474070381373167
+   DEBUG:root:i=566 residual=0.00212784088216722
+   DEBUG:root:i=567 residual=0.0021056777331978083
+   DEBUG:root:i=568 residual=0.0020939831156283617
+   DEBUG:root:i=569 residual=0.002066599205136299
+   DEBUG:root:i=570 residual=0.0020470779854804277
+   DEBUG:root:i=571 residual=0.002027560956776142
+   DEBUG:root:i=572 residual=0.002015884267166257
+   DEBUG:root:i=573 residual=0.001993768382817507
+   DEBUG:root:i=574 residual=0.001969053875654936
+   DEBUG:root:i=575 residual=0.0019548428244888783
+   DEBUG:root:i=576 residual=0.0019353711977601051
+   DEBUG:root:i=577 residual=0.0019132952438667417
+   DEBUG:root:i=578 residual=0.0018991223769262433
+   DEBUG:root:i=579 residual=0.0018796673975884914
+   DEBUG:root:i=580 residual=0.0018602721393108368
+   DEBUG:root:i=581 residual=0.00184613314922899
+   DEBUG:root:i=582 residual=0.0018240888603031635
+   DEBUG:root:i=583 residual=0.0018021144205704331
+   DEBUG:root:i=584 residual=0.001787981833331287
+   DEBUG:root:i=585 residual=0.001771249109879136
+   DEBUG:root:i=586 residual=0.0017493005143478513
+   DEBUG:root:i=587 residual=0.0017404165118932724
+   DEBUG:root:i=588 residual=0.0017184836324304342
+   DEBUG:root:i=589 residual=0.001707008806988597
+   DEBUG:root:i=590 residual=0.0016850745305418968
+   DEBUG:root:i=591 residual=0.0016709904884919524
+   DEBUG:root:i=592 residual=0.0016569329891353846
+   DEBUG:root:i=593 residual=0.0016324120806530118
+   DEBUG:root:i=594 residual=0.0016262475401163101
+   DEBUG:root:i=595 residual=0.0016095764003694057
+   DEBUG:root:i=596 residual=0.001592915621586144
+   DEBUG:root:i=597 residual=0.0015789364697411656
+   DEBUG:root:i=598 residual=0.0015596701996400952
+   DEBUG:root:i=599 residual=0.0015404914738610387
+   DEBUG:root:i=600 residual=0.0015316938515752554
+   DEBUG:root:i=601 residual=0.0015177438035607338
+   DEBUG:root:i=602 residual=0.001501119346357882
+   DEBUG:root:i=603 residual=0.001489797024987638
+   DEBUG:root:i=604 residual=0.001470640185289085
+   DEBUG:root:i=605 residual=0.0014566422905772924
+   DEBUG:root:i=606 residual=0.0014453398762270808
+   DEBUG:root:i=607 residual=0.00143141346052289
+   DEBUG:root:i=608 residual=0.0014201175654307008
+   DEBUG:root:i=609 residual=0.0014088290045037866
+   DEBUG:root:i=610 residual=0.0013870930997654796
+   DEBUG:root:i=611 residual=0.0013810369418933988
+   DEBUG:root:i=612 residual=0.0013593186158686876
+   DEBUG:root:i=613 residual=0.001353269792161882
+   DEBUG:root:i=614 residual=0.001342000556178391
+   DEBUG:root:i=615 residual=0.0013307473855093122
+   DEBUG:root:i=616 residual=0.0013090457068756223
+   DEBUG:root:i=617 residual=0.001297857379540801
+   DEBUG:root:i=618 residual=0.0012866302859038115
+   DEBUG:root:i=619 residual=0.0012701593805104494
+   DEBUG:root:i=620 residual=0.0012641589855775237
+   DEBUG:root:i=621 residual=0.001247764565050602
+   DEBUG:root:i=622 residual=0.0012417645193636417
+   DEBUG:root:i=623 residual=0.001230615540407598
+   DEBUG:root:i=624 residual=0.0012141801416873932
+   DEBUG:root:i=625 residual=0.001197807607240975
+   DEBUG:root:i=626 residual=0.0011918334057554603
+   DEBUG:root:i=627 residual=0.001180695602670312
+   DEBUG:root:i=628 residual=0.0011747301323339343
+   DEBUG:root:i=629 residual=0.0011636015260592103
+   DEBUG:root:i=630 residual=0.0011472569312900305
+   DEBUG:root:i=631 residual=0.0011308540124446154
+   DEBUG:root:i=632 residual=0.00112496770452708
+   DEBUG:root:i=633 residual=0.001113862032070756
+   DEBUG:root:i=634 residual=0.0011027544969692826
+   DEBUG:root:i=635 residual=0.001091533456929028
+   DEBUG:root:i=636 residual=0.0010856533190235496
+   DEBUG:root:i=637 residual=0.0010745725594460964
+   DEBUG:root:i=638 residual=0.0010634856298565865
+   DEBUG:root:i=639 residual=0.0010524039389565587
+   DEBUG:root:i=640 residual=0.0010361048625782132
+   DEBUG:root:i=641 residual=0.0010302619775757194
+   DEBUG:root:i=642 residual=0.001024420140311122
+   DEBUG:root:i=643 residual=0.00100551953073591
+   DEBUG:root:i=644 residual=0.0009996898006647825
+   DEBUG:root:i=645 residual=0.0009886325569823384
+   DEBUG:root:i=646 residual=0.0009801950072869658
+   DEBUG:root:i=647 residual=0.0009692027815617621
+   DEBUG:root:i=648 residual=0.0009633922600187361
+   DEBUG:root:i=649 residual=0.0009445232572034001
+   DEBUG:root:i=650 residual=0.0009439288987778127
+   DEBUG:root:i=651 residual=0.000932970957364887
+   DEBUG:root:i=652 residual=0.0009219346684403718
+   DEBUG:root:i=653 residual=0.0009161403286270797
+   DEBUG:root:i=654 residual=0.0009104085038416088
+   DEBUG:root:i=655 residual=0.0008993839146569371
+   DEBUG:root:i=656 residual=0.0008883738773874938
+   DEBUG:root:i=657 residual=0.0008878830121830106
+   DEBUG:root:i=658 residual=0.0008664217893965542
+   DEBUG:root:i=659 residual=0.0008633247925899923
+   DEBUG:root:i=660 residual=0.0008549385820515454
+   DEBUG:root:i=661 residual=0.0008544482989236712
+   DEBUG:root:i=662 residual=0.0008382318774238229
+   DEBUG:root:i=663 residual=0.0008325378294102848
+   DEBUG:root:i=664 residual=0.0008268418023362756
+   DEBUG:root:i=665 residual=0.0008132394286803901
+   DEBUG:root:i=666 residual=0.000812772661447525
+   DEBUG:root:i=667 residual=0.0007991936872713268
+   DEBUG:root:i=668 residual=0.0007882857462391257
+   DEBUG:root:i=669 residual=0.0007826011278666556
+   DEBUG:root:i=670 residual=0.0007716994150541723
+   DEBUG:root:i=671 residual=0.000771187013015151
+   DEBUG:root:i=672 residual=0.0007576705538667738
+   DEBUG:root:i=673 residual=0.0007546325796283782
+   DEBUG:root:i=674 residual=0.0007489652489311993
+   DEBUG:root:i=675 residual=0.0007406855002045631
+   DEBUG:root:i=676 residual=0.0007376417052000761
+   DEBUG:root:i=677 residual=0.0007319212891161442
+   DEBUG:root:i=678 residual=0.0007210454787127674
+   DEBUG:root:i=679 residual=0.0007206262671388686
+   DEBUG:root:i=680 residual=0.0006992972339503467
+   DEBUG:root:i=681 residual=0.0006936495774425566
+   DEBUG:root:i=682 residual=0.0006958436570130289
+   DEBUG:root:i=683 residual=0.0006849794881418347
+   DEBUG:root:i=684 residual=0.0006767352460883558
+   DEBUG:root:i=685 residual=0.0006711060414090753
+   DEBUG:root:i=686 residual=0.0006680811056867242
+   DEBUG:root:i=687 residual=0.0006598431500606239
+   DEBUG:root:i=688 residual=0.0006516008288599551
+   DEBUG:root:i=689 residual=0.0006486621568910778
+   DEBUG:root:i=690 residual=0.0006404257728718221
+   DEBUG:root:i=691 residual=0.0006400393322110176
+   DEBUG:root:i=692 residual=0.0006318131927400827
+   DEBUG:root:i=693 residual=0.0006209676503203809
+   DEBUG:root:i=694 residual=0.0006153708673082292
+   DEBUG:root:i=695 residual=0.0006072024698369205
+   DEBUG:root:i=696 residual=0.0006042164750397205
+   DEBUG:root:i=697 residual=0.0006012198864482343
+   DEBUG:root:i=698 residual=0.0005930177867412567
+   DEBUG:root:i=699 residual=0.0005848623695783317
+   DEBUG:root:i=700 residual=0.0005818898207508028
+   DEBUG:root:i=701 residual=0.0005815105978399515
+   DEBUG:root:i=702 residual=0.00056554184993729
+   DEBUG:root:i=703 residual=0.000565173162613064
+   DEBUG:root:i=704 residual=0.000562222907319665
+   DEBUG:root:i=705 residual=0.0005593087989836931
+   DEBUG:root:i=706 residual=0.0005484885186888278
+   DEBUG:root:i=707 residual=0.0005429770681075752
+   DEBUG:root:i=708 residual=0.0005347789847292006
+   DEBUG:root:i=709 residual=0.0005292691639624536
+   DEBUG:root:i=710 residual=0.0005236882134340703
+   DEBUG:root:i=711 residual=0.0005233478732407093
+   DEBUG:root:i=712 residual=0.0005178430583328009
+   DEBUG:root:i=713 residual=0.0005070492625236511
+   DEBUG:root:i=714 residual=0.0005067791789770126
+   DEBUG:root:i=715 residual=0.0005012729670852423
+   DEBUG:root:i=716 residual=0.0005009407759644091
+   DEBUG:root:i=717 residual=0.0004928460693918169
+   DEBUG:root:i=718 residual=0.00048728412366472185
+   DEBUG:root:i=719 residual=0.00048702998901717365
+   DEBUG:root:i=720 residual=0.0004814680723939091
+   DEBUG:root:i=721 residual=0.0004733625100925565
+   DEBUG:root:i=722 residual=0.00047050247667357326
+   DEBUG:root:i=723 residual=0.0004701766883954406
+   DEBUG:root:i=724 residual=0.0004646998131647706
+   DEBUG:root:i=725 residual=0.00045399449300020933
+   DEBUG:root:i=726 residual=0.00044845076627098024
+   DEBUG:root:i=727 residual=0.00044558223453350365
+   DEBUG:root:i=728 residual=0.00044533159234561026
+   DEBUG:root:i=729 residual=0.00044502774835564196
+   DEBUG:root:i=730 residual=0.00042913408833555877
+   DEBUG:root:i=731 residual=0.0004262568545527756
+   DEBUG:root:i=732 residual=0.0004260038258507848
+   DEBUG:root:i=733 residual=0.0004231467901263386
+   DEBUG:root:i=734 residual=0.0004176238435320556
+   DEBUG:root:i=735 residual=0.00041216349927708507
+   DEBUG:root:i=736 residual=0.00041192545904777944
+   DEBUG:root:i=737 residual=0.0004064682580064982
+   DEBUG:root:i=738 residual=0.00040362830623053014
+   DEBUG:root:i=739 residual=0.0003981156332883984
+   DEBUG:root:i=740 residual=0.0003978859167546034
+   DEBUG:root:i=741 residual=0.00038981312536634505
+   DEBUG:root:i=742 residual=0.00038958468940109015
+   DEBUG:root:i=743 residual=0.00038937327917665243
+   DEBUG:root:i=744 residual=0.00037608371349051595
+   DEBUG:root:i=745 residual=0.00037587122642435133
+   DEBUG:root:i=746 residual=0.00037564977537840605
+   DEBUG:root:i=747 residual=0.0003702107351273298
+   DEBUG:root:i=748 residual=0.0003646972472779453
+   DEBUG:root:i=749 residual=0.00035926024429500103
+   DEBUG:root:i=750 residual=0.00035904653486795723
+   DEBUG:root:i=751 residual=0.00035619884147308767
+   DEBUG:root:i=752 residual=0.000348175730323419
+   DEBUG:root:i=753 residual=0.0003479636798147112
+   DEBUG:root:i=754 residual=0.000342532352078706
+   DEBUG:root:i=755 residual=0.00033709185663610697
+   DEBUG:root:i=756 residual=0.00033689613337628543
+   DEBUG:root:i=757 residual=0.0003366899909451604
+   DEBUG:root:i=758 residual=0.0003338618262205273
+   DEBUG:root:i=759 residual=0.00033366723801009357
+   DEBUG:root:i=760 residual=0.00032823573565110564
+   DEBUG:root:i=761 residual=0.0003176545724272728
+   DEBUG:root:i=762 residual=0.00031750183552503586
+   DEBUG:root:i=763 residual=0.00031730683986097574
+   DEBUG:root:i=764 residual=0.00031446630600839853
+   DEBUG:root:i=765 residual=0.00031164687243290246
+   DEBUG:root:i=766 residual=0.00031146174296736717
+   DEBUG:root:i=767 residual=0.00030604249332100153
+   DEBUG:root:i=768 residual=0.0003058497968595475
+   DEBUG:root:i=769 residual=0.00030043761944398284
+   DEBUG:root:i=770 residual=0.0002950914786197245
+   DEBUG:root:i=771 residual=0.00029490888118743896
+   DEBUG:root:i=772 residual=0.00029473091126419604
+   DEBUG:root:i=773 residual=0.0002919361286330968
+   DEBUG:root:i=774 residual=0.00028653210029006004
+   DEBUG:root:i=775 residual=0.00028112667496316135
+   DEBUG:root:i=776 residual=0.00028100941563025117
+   DEBUG:root:i=777 residual=0.0002756061148829758
+   DEBUG:root:i=778 residual=0.00027285877149552107
+   DEBUG:root:i=779 residual=0.00027267917175777256
+   DEBUG:root:i=780 residual=0.00026728137163445354
+   DEBUG:root:i=781 residual=0.0002592992677818984
+   DEBUG:root:i=782 residual=0.00025911678676493466
+   DEBUG:root:i=783 residual=0.000258947053225711
+   DEBUG:root:i=784 residual=0.00025878052110783756
+   DEBUG:root:i=785 residual=0.0002586659393273294
+   DEBUG:root:i=786 residual=0.00025327756884507835
+   DEBUG:root:i=787 residual=0.00025310710771009326
+   DEBUG:root:i=788 residual=0.0002529465709812939
+   DEBUG:root:i=789 residual=0.00024762452812865376
+   DEBUG:root:i=790 residual=0.0002448241284582764
+   DEBUG:root:i=791 residual=0.0002394274197285995
+   DEBUG:root:i=792 residual=0.00023933318152558059
+   DEBUG:root:i=793 residual=0.0002391760644968599
+   DEBUG:root:i=794 residual=0.0002364196552662179
+   DEBUG:root:i=795 residual=0.00023108570894692093
+   DEBUG:root:i=796 residual=0.0002309339033672586
+   DEBUG:root:i=797 residual=0.0002255564759252593
+   DEBUG:root:i=798 residual=0.0002254604478366673
+   DEBUG:root:i=799 residual=0.00022530216665472835
+   DEBUG:root:i=800 residual=0.0002225132193416357
+   DEBUG:root:i=801 residual=0.00022243161220103502
+   DEBUG:root:i=802 residual=0.00022227884619496763
+   DEBUG:root:i=803 residual=0.00021689169807359576
+   DEBUG:root:i=804 residual=0.0002168139471905306
+   DEBUG:root:i=805 residual=0.00021665812528226525
+   DEBUG:root:i=806 residual=0.00020611881336662918
+   DEBUG:root:i=807 residual=0.00020597240654751658
+   DEBUG:root:i=808 residual=0.00020581742865033448
+   DEBUG:root:i=809 residual=0.00020573491929098964
+   DEBUG:root:i=810 residual=0.00020558666437864304
+   DEBUG:root:i=811 residual=0.0002055160002782941
+   DEBUG:root:i=812 residual=0.00019754325330723077
+   DEBUG:root:i=813 residual=0.0001973938924493268
+   DEBUG:root:i=814 residual=0.00019468415121082217
+   DEBUG:root:i=815 residual=0.00019454628636594862
+   DEBUG:root:i=816 residual=0.0001892401633085683
+   DEBUG:root:i=817 residual=0.00018387277668807656
+   DEBUG:root:i=818 residual=0.00017857363855000585
+   DEBUG:root:i=819 residual=0.00017843118985183537
+   DEBUG:root:i=820 residual=0.0001783504558261484
+   DEBUG:root:i=821 residual=0.00017821045184973627
+   DEBUG:root:i=822 residual=0.00017813692102208734
+   DEBUG:root:i=823 residual=0.00017800292698666453
+   DEBUG:root:i=824 residual=0.00017533829668536782
+   DEBUG:root:i=825 residual=0.0001752033131197095
+   DEBUG:root:i=826 residual=0.00017514290811959654
+   DEBUG:root:i=827 residual=0.00016976975894067436
+   DEBUG:root:i=828 residual=0.00016970379510894418
+   DEBUG:root:i=829 residual=0.0001695736573310569
+   DEBUG:root:i=830 residual=0.00016951416910160333
+   DEBUG:root:i=831 residual=0.00016414168931078166
+   DEBUG:root:i=832 residual=0.0001640788250369951
+   DEBUG:root:i=833 residual=0.00016395295097026974
+   DEBUG:root:i=834 residual=0.0001586572325322777
+   DEBUG:root:i=835 residual=0.00015589070972055197
+   DEBUG:root:i=836 residual=0.00015582201012875885
+   DEBUG:root:i=837 residual=0.00015569831884931773
+   DEBUG:root:i=838 residual=0.00015563871420454234
+   DEBUG:root:i=839 residual=0.00014776166062802076
+   DEBUG:root:i=840 residual=0.00014763668878003955
+   DEBUG:root:i=841 residual=0.0001449460833100602
+   DEBUG:root:i=842 residual=0.00014480920799542218
+   DEBUG:root:i=843 residual=0.00014475038915406913
+   DEBUG:root:i=844 residual=0.00014462682884186506
+   DEBUG:root:i=845 residual=0.0001445702073397115
+   DEBUG:root:i=846 residual=0.00014451977040152997
+   DEBUG:root:i=847 residual=0.00014179876598063856
+   DEBUG:root:i=848 residual=0.0001391042460454628
+   DEBUG:root:i=849 residual=0.00014163160813041031
+   DEBUG:root:i=850 residual=0.00014158053090795875
+   DEBUG:root:i=851 residual=0.00013888327521272004
+   DEBUG:root:i=852 residual=0.00014141571591608226
+   DEBUG:root:i=853 residual=0.0001308789651375264
+   DEBUG:root:i=854 residual=0.0001281305158045143
+   DEBUG:root:i=855 residual=0.00012807348684873432
+   DEBUG:root:i=856 residual=0.00012543842603918165
+   DEBUG:root:i=857 residual=0.00012532438267953694
+   DEBUG:root:i=858 residual=0.00012785715807694942
+   DEBUG:root:i=859 residual=0.0001252196088898927
+   DEBUG:root:i=860 residual=0.000125105056213215
+   DEBUG:root:i=861 residual=0.000127651946968399
+   DEBUG:root:i=862 residual=0.00012501463061198592
+   DEBUG:root:i=863 residual=0.00012490163499023765
+   DEBUG:root:i=864 residual=0.00012745500134769827
+   DEBUG:root:i=865 residual=0.0001220994017785415
+   DEBUG:root:i=866 residual=0.0001220526683027856
+   DEBUG:root:i=867 residual=0.00012200928176753223
+   DEBUG:root:i=868 residual=0.00011665656347759068
+   DEBUG:root:i=869 residual=0.0001088062854250893
+   DEBUG:root:i=870 residual=0.00010355197446187958
+   DEBUG:root:i=871 residual=0.00010350728553021327
+   DEBUG:root:i=872 residual=0.00010075206228066236
+   DEBUG:root:i=873 residual=0.00010069773270515725
+   DEBUG:root:i=874 residual=0.00010065300739370286
+   DEBUG:root:i=875 residual=0.00010053361620521173
+   DEBUG:root:i=876 residual=0.00010049295087810606
+   DEBUG:root:i=877 residual=9.524646156933159e-05
+   DEBUG:root:i=878 residual=9.256855264538899e-05
+   DEBUG:root:i=879 residual=9.50862595345825e-05
+   DEBUG:root:i=880 residual=9.248374408343807e-05
+   DEBUG:root:i=881 residual=9.236451296601444e-05
+   DEBUG:root:i=882 residual=9.488729847362265e-05
+   DEBUG:root:i=883 residual=9.228177805198357e-05
+   DEBUG:root:i=884 residual=9.224346285918728e-05
+   DEBUG:root:i=885 residual=9.470312215853482e-05
+   DEBUG:root:i=886 residual=9.209526615450159e-05
+   DEBUG:root:i=887 residual=8.940682164393365e-05
+   DEBUG:root:i=888 residual=8.409584552282467e-05
+   DEBUG:root:i=889 residual=8.15007952041924e-05
+   DEBUG:root:i=890 residual=8.400833758059889e-05
+   DEBUG:root:i=891 residual=8.141924627125263e-05
+   DEBUG:root:i=892 residual=8.130649075610563e-05
+   DEBUG:root:i=893 residual=8.382337546208873e-05
+   DEBUG:root:i=894 residual=8.123216684907675e-05
+   DEBUG:root:i=895 residual=8.119073027046397e-05
+   DEBUG:root:i=896 residual=8.36471444927156e-05
+   DEBUG:root:i=897 residual=8.10506971902214e-05
+   DEBUG:root:i=898 residual=8.100832928903401e-05
+   DEBUG:root:i=899 residual=8.354093006346375e-05
+   DEBUG:root:i=900 residual=8.087034802883863e-05
+   DEBUG:root:i=901 residual=7.818553422112018e-05
+   DEBUG:root:i=902 residual=7.815157005097717e-05
+   DEBUG:root:i=903 residual=7.811703108018264e-05
+   DEBUG:root:i=904 residual=7.801869651302695e-05
+   DEBUG:root:i=905 residual=7.798535807523876e-05
+   DEBUG:root:i=906 residual=7.795669080223888e-05
+   DEBUG:root:i=907 residual=7.792755059199408e-05
+   DEBUG:root:i=908 residual=7.788950460962951e-05
+   DEBUG:root:i=909 residual=7.256964454427361e-05
+   DEBUG:root:i=910 residual=7.519467908423394e-05
+   DEBUG:root:i=911 residual=6.730491440976039e-05
+   DEBUG:root:i=912 residual=6.727161235176027e-05
+   DEBUG:root:i=913 residual=6.71671296004206e-05
+   DEBUG:root:i=914 residual=6.459754513343796e-05
+   DEBUG:root:i=915 residual=5.939921902609058e-05
+   DEBUG:root:i=916 residual=6.189105624798685e-05
+   DEBUG:root:i=917 residual=5.933539796387777e-05
+   DEBUG:root:i=918 residual=5.9222893469268456e-05
+   DEBUG:root:i=919 residual=6.17128680460155e-05
+   DEBUG:root:i=920 residual=5.915097426623106e-05
+   DEBUG:root:i=921 residual=5.912363121751696e-05
+   DEBUG:root:i=922 residual=6.162534555187449e-05
+   DEBUG:root:i=923 residual=5.898941890336573e-05
+   DEBUG:root:i=924 residual=5.8962355979019776e-05
+   DEBUG:root:i=925 residual=6.146875966805965e-05
+   DEBUG:root:i=926 residual=5.890539978281595e-05
+   DEBUG:root:i=927 residual=5.8879148127743974e-05
+   DEBUG:root:i=928 residual=6.13230949966237e-05
+   DEBUG:root:i=929 residual=5.875585338799283e-05
+   DEBUG:root:i=930 residual=5.872713518328965e-05
+   DEBUG:root:i=931 residual=6.124401988927275e-05
+   DEBUG:root:i=932 residual=5.8671936130849645e-05
+   DEBUG:root:i=933 residual=5.598116695182398e-05
+   DEBUG:root:i=934 residual=5.5887281632749364e-05
+   DEBUG:root:i=935 residual=5.586134648183361e-05
+   DEBUG:root:i=936 residual=5.583951497101225e-05
+   DEBUG:root:i=937 residual=5.5813990911701694e-05
+   DEBUG:root:i=938 residual=5.5788932513678446e-05
+   DEBUG:root:i=939 residual=5.57710045541171e-05
+   DEBUG:root:i=940 residual=5.567894913838245e-05
+   DEBUG:root:i=941 residual=5.044707722845487e-05
+   DEBUG:root:i=942 residual=5.309520929586142e-05
+   DEBUG:root:i=943 residual=5.039924872107804e-05
+   DEBUG:root:i=944 residual=5.305057857185602e-05
+   DEBUG:root:i=945 residual=5.3019488404970616e-05
+   DEBUG:root:i=946 residual=5.0257476686965674e-05
+   DEBUG:root:i=947 residual=5.291742490953766e-05
+   DEBUG:root:i=948 residual=5.289345426717773e-05
+   DEBUG:root:i=949 residual=5.019523814553395e-05
+   DEBUG:root:i=950 residual=5.2854735258733854e-05
+   DEBUG:root:i=951 residual=5.283765131025575e-05
+   DEBUG:root:i=952 residual=5.013363261241466e-05
+   DEBUG:root:i=953 residual=5.004648846806958e-05
+   DEBUG:root:i=954 residual=4.2309500713599846e-05
+   DEBUG:root:i=955 residual=4.228300167596899e-05
+   DEBUG:root:i=956 residual=3.959876994485967e-05
+   DEBUG:root:i=957 residual=4.2244355427101254e-05
+   DEBUG:root:i=958 residual=4.222306961310096e-05
+   DEBUG:root:i=959 residual=3.95351235056296e-05
+   DEBUG:root:i=960 residual=4.2103376472368836e-05
+   DEBUG:root:i=961 residual=4.208664540783502e-05
+   DEBUG:root:i=962 residual=3.938942609238438e-05
+   DEBUG:root:i=963 residual=4.204999277135357e-05
+   DEBUG:root:i=964 residual=4.203281787340529e-05
+   DEBUG:root:i=965 residual=3.933028347091749e-05
+   DEBUG:root:i=966 residual=4.20019387092907e-05
+   DEBUG:root:i=967 residual=4.191556217847392e-05
+   DEBUG:root:i=968 residual=3.920289236702956e-05
+   DEBUG:root:i=969 residual=4.1879091440932825e-05
+   DEBUG:root:i=970 residual=4.185948637314141e-05
+   DEBUG:root:i=971 residual=3.915348861482926e-05
+   DEBUG:root:i=972 residual=4.183374403510243e-05
+   DEBUG:root:i=973 residual=4.1815947042778134e-05
+   DEBUG:root:i=974 residual=3.91060093534179e-05
+   DEBUG:root:i=975 residual=4.178366725682281e-05
+   DEBUG:root:i=976 residual=4.170810279902071e-05
+   DEBUG:root:i=977 residual=3.899076546076685e-05
+   DEBUG:root:i=978 residual=4.1678624256746843e-05
+   DEBUG:root:i=979 residual=4.166918733972125e-05
+   DEBUG:root:i=980 residual=3.8940299418754876e-05
+   DEBUG:root:i=981 residual=3.8927264540689066e-05
+   DEBUG:root:i=982 residual=3.6404573620529845e-05
+   DEBUG:root:i=983 residual=3.638631824287586e-05
+   DEBUG:root:i=984 residual=3.360825212439522e-05
+   DEBUG:root:i=985 residual=3.3586333302082494e-05
+   DEBUG:root:i=986 residual=3.3576863643247634e-05
+   DEBUG:root:i=987 residual=3.356036904733628e-05
+   DEBUG:root:i=988 residual=3.354745786054991e-05
+   DEBUG:root:i=989 residual=3.3534193789819255e-05
+   DEBUG:root:i=990 residual=3.351425766595639e-05
+   DEBUG:root:i=991 residual=3.35052827722393e-05
+   DEBUG:root:i=992 residual=3.349375765537843e-05
+   DEBUG:root:i=993 residual=3.3476204407634214e-05
+   DEBUG:root:i=994 residual=3.3410942705813795e-05
+   DEBUG:root:i=995 residual=2.819172186718788e-05
+   DEBUG:root:i=996 residual=3.088849553023465e-05
+   DEBUG:root:i=997 residual=3.087857840000652e-05
+   DEBUG:root:i=998 residual=2.8154685423942283e-05
+   DEBUG:root:i=999 residual=3.08501512336079e-05
+   INFO:root:rank=0 pagerank=5.2386e+01 url=www.lawfareblog.com/lawfare-live-covid-19-speech-and-surveillance
+   INFO:root:rank=1 pagerank=5.2386e+01 url=www.lawfareblog.com/covid-19-speech-and-surveillance-response
+   INFO:root:rank=2 pagerank=7.9439e+00 url=www.lawfareblog.com/cost-using-zero-days
+   INFO:root:rank=3 pagerank=2.3700e+00 url=www.lawfareblog.com/lawfare-podcast-former-congressman-brian-baird-and-daniel-schuman-how-congress-can-continue-function
+   INFO:root:rank=4 pagerank=1.5530e+00 url=www.lawfareblog.com/events
+   INFO:root:rank=5 pagerank=1.1867e+00 url=www.lawfareblog.com/water-wars-increased-us-focus-indo-pacific
+   INFO:root:rank=6 pagerank=1.1867e+00 url=www.lawfareblog.com/water-wars-drill-maybe-drill
+   INFO:root:rank=7 pagerank=1.1867e+00 url=www.lawfareblog.com/water-wars-disjointed-operations-south-china-sea
+   INFO:root:rank=8 pagerank=1.1867e+00 url=www.lawfareblog.com/water-wars-us-china-divide-shangri-la
+   INFO:root:rank=9 pagerank=1.1867e+00 url=www.lawfareblog.com/water-wars-sinking-feeling-philippine-china-relations
    ```
 
    Task 2, part 1:
@@ -2767,7 +2405,7 @@ Your goal should be to discover what topics that www.lawfareblog.com considers t
     INFO:root:rank=7 pagerank=1.0199e-01 url=www.lawfareblog.com/prosecuting-purposeful-coronavirus-exposure-terrorism
     INFO:root:rank=8 pagerank=9.4298e-02 url=www.lawfareblog.com/lawfare-podcast-mom-and-dad-talk-clinical-trials-pandemic
     INFO:root:rank=9 pagerank=8.7207e-02 url=www.lawfareblog.com/house-oversight-committee-holds-day-two-hearing-government-coronavirus-response
-
+   
    ```
 
    Task 2, part 2:
